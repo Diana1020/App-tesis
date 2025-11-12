@@ -1,6 +1,5 @@
 # app.py — UI pulida + Toggle Claro/Oscuro + Tooltips + Parser de summary (tabla + subtítulos)
 import os, json, pickle, io, re
-from datetime import datetime
 from typing import Any, Dict, Optional, List, Tuple
 import numpy as np
 
@@ -34,9 +33,7 @@ from datetime import datetime, timedelta
 import requests
 import base64
 import tempfile
-import os
 import threading
-import time
 
 # ------------------------------------------------------------
 # Configuración base
@@ -4876,3 +4873,4 @@ else:
     }}
     </style>
     """, unsafe_allow_html=True)
+
