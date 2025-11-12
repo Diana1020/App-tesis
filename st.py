@@ -1,4 +1,4 @@
-# app.py — UI pulida + Toggle Claro/Oscuro + Tooltips + Parser de summary (tabla + subtítulos)
+# app.py — Polished UI + Light/Dark Toggle + Tooltips + Summary Parser (table + subtitles)
 import os, json, pickle, io, re
 from typing import Any, Dict, Optional, List, Tuple
 import numpy as np
@@ -18,9 +18,9 @@ import graphviz
 import hashlib
 from difflib import SequenceMatcher
 
-# Compatibilidad para components.html: pasar 'key' sólo si existe en la firma
+# Compatibility for components.html: pass 'key' only if it exists in the signature
 import inspect
-# Agregar después de las funciones existentes y antes del sidebar
+# Add after existing functions and before the sidebar
 
 import plotly.express as px
 import plotly.graph_objects as go
@@ -36,19 +36,20 @@ import tempfile
 import threading
 
 # ------------------------------------------------------------
-# Configuración base
+# Base configuration
 # ------------------------------------------------------------
-st.set_page_config(page_title="Interfaz • Minería de Procesos", page_icon="🧭", layout="wide")
+st.set_page_config(page_title="Interface • Process Mining", page_icon="🧭", layout="wide")
+
 
 def is_backend_ready() -> bool:
-    """True sólo cuando el backend ya entregó el state.pkl y existe en disco tmp."""
+    """True only when the backend has delivered the state.pkl and it exists in tmp disk."""
     path = st.session_state.get('state_file_path')
     return bool(path) and os.path.exists(path)
 
-# Configuración del backend
+# Backend configuration
 BACKEND_URL = "https://agentes-service-947456414948.us-central1.run.app"
 
-# --- Identidad de cliente y sesión (sin login) ---
+# --- Client identity and session (without login) ---
 def get_or_make_client_id() -> str:
     if 'client_id' not in st.session_state:
         st.session_state.client_id = f"cli_{uuid.uuid4().hex[:12]}"
@@ -63,18 +64,18 @@ def get_or_make_session_token() -> str:
 CLIENT_ID = get_or_make_client_id()
 SESSION_ID = get_or_make_session_token()
 
-# --- Endpoints asíncronos (ajusta si tus rutas difieren)
-UPLOAD_ENDPOINT = f"{BACKEND_URL}/upload-build-state-pkl"  # Usar el endpoint directo
+# --- Async endpoints (adjust if your routes differ) ---
+UPLOAD_ENDPOINT = f"{BACKEND_URL}/upload-build-state-pkl"  # Use the direct endpoint
 UPLOAD_START    = f"{BACKEND_URL}/upload-build-state-pkl/start"
 UPLOAD_PROGRESS = f"{BACKEND_URL}/upload-build-state-pkl/progress"
 UPLOAD_RESULT   = f"{BACKEND_URL}/upload-build-state-pkl/result"
 
 POLL_INTERVAL_SEC = 0.6
-POLL_TIMEOUT_SEC  = 60 * 60  # 60 min máx (procesos grandes)
+POLL_TIMEOUT_SEC  = 60 * 60  # 60 min max (large processes)
 
 
 def start_heartbeat(client_id: str, interval_minutes: int = 10):
-    """Envía heartbeat periódico - VERSIÓN MEJORADA con manejo de errores"""
+    """Sends periodic heartbeat - IMPROVED VERSION with error handling"""
     def heartbeat_loop():
         last_success = time.time()
         consecutive_failures = 0
@@ -86,31 +87,31 @@ def start_heartbeat(client_id: str, interval_minutes: int = 10):
                     f"{BACKEND_URL}/qdrant/heartbeat",
                     params={
                         'client_id': client_id,
-                        'ttl_seconds': 7200  # 2 horas
+                        'ttl_seconds': 7200  # 2 hours
                     },
-                    timeout=30  # Aumentar timeout para operaciones batch
+                    timeout=30  # Increase timeout for batch operations
                 )
                 
                 if response.status_code == 200:
                     if consecutive_failures > 0:
-                        print(f"✅ Heartbeat recuperado para {client_id}")
+                        print(f"✅ Heartbeat recovered for {client_id}")
                     consecutive_failures = 0
                     last_success = time.time()
                 else:
                     consecutive_failures += 1
-                    print(f"❌ Error en heartbeat: {response.status_code}")
+                    print(f"❌ Heartbeat error: {response.status_code}")
                     
             except requests.exceptions.Timeout:
                 consecutive_failures += 1
-                print(f"⏰ Timeout en heartbeat")
+                print(f"⏰ Heartbeat timeout")
             except Exception as e:
                 consecutive_failures += 1
-                print(f"❌ Error enviando heartbeat: {e}")
+                print(f"❌ Error sending heartbeat: {e}")
             
-            # Backoff exponencial en caso de fallos
+            # Exponential backoff in case of failures
             if consecutive_failures >= max_consecutive_failures:
                 wait_time = min(interval_minutes * 4, 60) * 60
-                print(f"⚠️ Muchos fallos. Esperando {wait_time/60} min...")
+                print(f"⚠️ Many failures. Waiting {wait_time/60} min...")
                 time.sleep(wait_time)
                 consecutive_failures = 0
             else:
@@ -120,9 +121,7 @@ def start_heartbeat(client_id: str, interval_minutes: int = 10):
     thread.start()
     return thread
 
-
 def _progress_overlay_html(percent: int, domain: str, p: Dict[str,str]) -> str:
-    # clamp
     percent = max(0, min(100, int(percent or 0)))
     return f"""
     <div style="
@@ -135,8 +134,8 @@ def _progress_overlay_html(percent: int, domain: str, p: Dict[str,str]) -> str:
         <div style="display:flex; gap:16px; align-items:center; margin-bottom:14px;">
           <div style="font-size:40px">🗎</div>
           <div>
-            <div style="font-weight:800;color:{p['TEXT']};font-size:20px;margin-bottom:2px">Obteniendo reporte…</div>
-            <div style="color:{p['SOFT']};font-size:13px">Dominio: <b style="color:{p['ACCENT']}">{domain}</b></div>
+            <div style="font-weight:800;color:{p['TEXT']};font-size:20px;margin-bottom:2px">Fetching report…</div>
+            <div style="color:{p['SOFT']};font-size:13px">Domain: <b style="color:{p['ACCENT']}">{domain}</b></div>
           </div>
         </div>
         <div style="height:14px;background:{p['SURFACE']};border:1px solid {p['BORDER']};
@@ -146,26 +145,26 @@ def _progress_overlay_html(percent: int, domain: str, p: Dict[str,str]) -> str:
                       transition:width .25s ease"></div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;color:{p['SOFT']};font-size:12.5px">
-          <span>Construyendo <code>state.pkl</code> en backend…</span>
+          <span>Building <code>state.pkl</code> on backend…</span>
           <span><b style="color:{p['TEXT']}">{percent}</b> %</span>
         </div>
       </div>
     </div>
     """
 
-def procesar_archivo_backend(uploaded_file, dominio, upsert_qdrant=False, ttl_seconds=7200, use_preprocessed_state=False) -> bool:
+def process_file_backend(uploaded_file, domain, upsert_qdrant=False, ttl_seconds=7200, use_preprocessed_state=False) -> bool:
     """
-    Versión simplificada sin overlays complejos
+    Simplified version without complex overlays
     """
     try:
         files = {
             'file': (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)
         }
         data = {
-            'domain_filter': dominio,
+            'domain_filter': domain,
             'upsert_to_qdrant': str(upsert_qdrant).lower(),
             'ttl_seconds': str(ttl_seconds),
-            'use_preprocessed_state': str(use_preprocessed_state).lower()  # ✅ NUEVO CAMPO
+            'use_preprocessed_state': str(use_preprocessed_state).lower()  # ✅ NEW FIELD
         }
 
         headers = {
@@ -173,9 +172,9 @@ def procesar_archivo_backend(uploaded_file, dominio, upsert_qdrant=False, ttl_se
             'x-session-id': SESSION_ID
         }
 
-        # Solo mostrar un status simple de Streamlit
-        with st.status(f"📤 Procesando {uploaded_file.name}...", expanded=True) as status:
-            st.write("🔄 Enviando archivo al backend...")
+        # Only show a simple Streamlit status
+        with st.status(f"📤 Processing {uploaded_file.name}...", expanded=True) as status:
+            st.write("🔄 Uploading file to backend...")
             
             response = requests.post(
                 UPLOAD_ENDPOINT,
@@ -186,43 +185,36 @@ def procesar_archivo_backend(uploaded_file, dominio, upsert_qdrant=False, ttl_se
             )
 
             if response.status_code == 200:
-                st.write("✅ Archivo recibido por el backend")
-                
-                # Mostrar mensaje diferente según el modo
+                st.write("✅ File received by backend")
+        
                 if use_preprocessed_state:
-                    st.write("⚡ Cargando state preprocesado...")
+                    st.write("⚡ Loading preprocessed state...")
                 else:
-                    st.write("⚙️ Construyendo state.pkl desde cero...")
+                    st.write("⚙️ Building state.pkl from scratch...")
                 
-                # Guardar en archivo temporal
+                # Save to temporary file
                 state_content = response.content
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl') as tmp_file:
                     tmp_file.write(state_content)
                     new_state_path = tmp_file.name
 
-                # Limpiar cache
+                # Clear cache
                 st.cache_data.clear()
-                
-                # Actualizar session_state
                 st.session_state['state_file_path'] = new_state_path
-                
-                st.write("📥 Descargando resultados...")
-                
-                # Mensaje final según el modo
+                st.write("📥 Downloading results...")
+        
                 if use_preprocessed_state:
-                    status.update(label="Procesamiento rápido completado", state="complete", expanded=False)
-                    st.success("✅ State preprocesado cargado exitosamente")
+                    status.update(label="Fast processing completed", state="complete", expanded=False)
+                    st.success("✅ Preprocessed state loaded successfully")
                 else:
-                    status.update(label="Procesamiento completo completado", state="complete", expanded=False)
-                    st.success("✅ Archivo procesado exitosamente desde cero")
-
-                # Forzar rerun para recargar todo
+                    status.update(label="Full processing completed", state="complete", expanded=False)
+                    st.success("✅ File processed successfully from scratch")
+        
                 st.rerun()
-                
                 return True
             else:
-                status.update(label="Error en el procesamiento", state="error", expanded=False)
-                st.error(f"❌ Error del backend: {response.status_code} - {response.text}")
+                status.update(label="Processing error", state="error", expanded=False)
+                st.error(f"❌ Backend error: {response.status_code} - {response.text}")
                 return False
 
     except Exception as e:
@@ -241,9 +233,9 @@ def html_safe(html_str, *, height=0, scrolling=False, key=None):
 
 def create_activity_frequency_chart(df: pd.DataFrame, top_n: int = 8, show_all: bool = False, 
                                   p: Dict[str, str] = None) -> go.Figure:
-    """Versión corregida - cálculos precisos de casos vs eventos"""
+    """Corrected version - precise calculations of cases vs events"""
     
-    # Calcular frecuencias CORRECTAMENTE
+    # Calculate frequencies CORRECTLY
     case_freq = df.groupby('concept:name')['case:concept:name'].nunique().reset_index()
     case_freq.columns = ['Activity', 'Number of cases']
     event_freq = df['concept:name'].value_counts().reset_index()
@@ -257,7 +249,7 @@ def create_activity_frequency_chart(df: pd.DataFrame, top_n: int = 8, show_all: 
     
     chart_df = chart_df.sort_values('Number of cases', ascending=True)
     
-    # Crear figura
+    # Create figure
     fig = go.Figure()
     
     bar_color = p['ACCENT'] if p else '#2563eb'
@@ -272,8 +264,8 @@ def create_activity_frequency_chart(df: pd.DataFrame, top_n: int = 8, show_all: 
         ),
         hovertemplate=(
             "<b>%{y}</b><br>" +
-            "Casos: %{x:,.0f}<br>" +
-            "Eventos: %{customdata:,.0f}<br>" +
+            "Cases: %{x:,.0f}<br>" +
+            "Events: %{customdata:,.0f}<br>" +
             "<extra></extra>"
         ),
         customdata=chart_df['Number of events'],
@@ -291,7 +283,7 @@ def create_activity_frequency_chart(df: pd.DataFrame, top_n: int = 8, show_all: 
         margin=dict(l=10, r=10, t=60, b=10),
         showlegend=False,
         xaxis=dict(
-            title='Número de Casos',
+            title='Number of Cases',
             gridcolor=p['BORDER'] if p else '#e5e7eb',
             gridwidth=1,
             showline=True,
@@ -299,7 +291,7 @@ def create_activity_frequency_chart(df: pd.DataFrame, top_n: int = 8, show_all: 
             tickformat=',.0f'
         ),
         yaxis=dict(
-            title='Actividad',
+            title='Activity',
             gridcolor=p['BORDER'] if p else '#e5e7eb',
             showline=True,
             linecolor=p['BORDER'] if p else '#e5e7eb',
@@ -311,7 +303,7 @@ def create_activity_frequency_chart(df: pd.DataFrame, top_n: int = 8, show_all: 
             font_color=p['TEXT'] if p else '#0f172a'
         ),
         title=dict(
-            text=f"Frecuencia de Actividades (Total: {total_cases:,.0f} casos, {total_events:,.0f} eventos)",
+            text=f"Activity Frequency (Total: {total_cases:,.0f} cases, {total_events:,.0f} events)",
             x=0.5,
             y=0.95,
             xanchor='center',
@@ -332,16 +324,16 @@ def create_resource_role_heatmap(
     others_bucket: bool = True,
     swap_axes: bool = False,
     show_values: bool = True,
-    text_min: Optional[float] = None,   # None -> auto (5 si conteos, 2.0 si %)
+    text_min: Optional[float] = None,   # None -> auto (5 if counts, 2.0 if %)
     zrange: Optional[Tuple[float, float]] = None,
     colorscale: Optional[str] = None,
 ) -> go.Figure:
-    # Validaciones mínimas
+    # Minimal validations
     need_cols = {"org:resource", "org:role"}
     if df is None or df.empty or not need_cols.issubset(df.columns):
         fig = go.Figure()
         fig.update_layout(
-            title="Faltan columnas 'org:resource' y/o 'org:role'",
+            title="Missing columns 'org:resource' and/or 'org:role'",
             height=320,
             plot_bgcolor=(p['SURFACE'] if p else 'white'),
             paper_bgcolor=(p['SURFACE'] if p else 'white'),
@@ -356,16 +348,16 @@ def create_resource_role_heatmap(
         else:
             base = df[["case:concept:name", "org:resource", "org:role"]].copy()
             if include_unknown:
-                base["org:resource"] = base["org:resource"].fillna("Sin recurso")
-                base["org:role"] = base["org:role"].fillna("Sin rol")
+                base["org:resource"] = base["org:resource"].fillna("No resource")
+                base["org:role"] = base["org:role"].fillna("No role")
             else:
                 base = base.dropna(subset=["org:resource", "org:role"])
-            base = base.drop_duplicates()  # 1 fila por (case,resource,role)
+            base = base.drop_duplicates()  # 1 row per (case,resource,role)
     if metric != "cases":
         base = df[["org:resource", "org:role"]].copy()
         if include_unknown:
-            base["org:resource"] = base["org:resource"].fillna("Sin recurso")
-            base["org:role"] = base["org:role"].fillna("Sin rol")
+            base["org:resource"] = base["org:resource"].fillna("No resource")
+            base["org:role"] = base["org:role"].fillna("No role")
         else:
             base = base.dropna(subset=["org:resource", "org:role"])
 
@@ -374,7 +366,7 @@ def create_resource_role_heatmap(
     if ct.size == 0:
         fig = go.Figure()
         fig.update_layout(
-            title="Sin datos para construir la matriz Recursos × Roles",
+            title="No data to build Resources × Roles matrix",
             height=320,
             plot_bgcolor=(p['SURFACE'] if p else 'white'),
             paper_bgcolor=(p['SURFACE'] if p else 'white'),
@@ -382,7 +374,7 @@ def create_resource_role_heatmap(
         )
         return fig
 
-    # Top-K + bucket "Otros"
+    # Top-K + "Others" bucket
     row_tot = ct.sum(axis=1).sort_values(ascending=False)
     col_tot = ct.sum(axis=0).sort_values(ascending=False)
     keep_rows = row_tot.head(max(1, top_resources)).index
@@ -392,20 +384,20 @@ def create_resource_role_heatmap(
 
     ct = ct.loc[:, keep_cols]
 
-    # Swap ejes si se pide
+    # Swap axes if requested
     if swap_axes:
         ct = ct.T
 
-    # Normalización
-    title_suffix = " (conteos)"
+    # Normalization
+    title_suffix = " (counts)"
     if normalize == "row":
         ct = ct.div(ct.sum(axis=1).replace(0, np.nan), axis=0) * 100.0
-        title_suffix = " (% por fila)"
+        title_suffix = " (% by row)"
     elif normalize == "col":
         ct = ct.div(ct.sum(axis=0).replace(0, np.nan), axis=1) * 100.0
-        title_suffix = " (% por columna)"
+        title_suffix = " (% by column)"
 
-    # Texto: umbral automático si no se define
+    # Text: automatic threshold if not defined
     if text_min is None:
         text_min = 2.0 if normalize in ("row", "col") else 5.0
 
@@ -417,10 +409,10 @@ def create_resource_role_heatmap(
         else:
             show_text = [[f"{int(v):,}" if (pd.notna(v) and v >= text_min) else "" for v in row] for row in zvals]
 
-    # Altura dinámica
+    # Dynamic height
     height = max(360, 26 * ct.shape[0] + 140)
 
-    # Colores
+    # Colors
     cs = colorscale or ("Blues" if (not p or p.get("MODE") == "light") else "Viridis")
 
     # Heatmap
@@ -435,33 +427,33 @@ def create_resource_role_heatmap(
         text=show_text,
         texttemplate="%{text}" if show_values else None,
         hovertemplate=(
-            "<b>Fila:</b> %{y}<br>"
-            "<b>Columna:</b> %{x}<br>"
-            f"<b>Valor</b>: %{ 'z:.1f' if normalize in ('row','col') else 'z' }"
+            "<b>Row:</b> %{y}<br>"
+            "<b>Column:</b> %{x}<br>"
+            f"<b>Value</b>: %{ 'z:.1f' if normalize in ('row','col') else 'z' }"
             f"{'%' if normalize in ('row','col') else ''}"
             "<extra></extra>"
         ),
     )
 
-    # Título
-    metric_name = "casos" if metric == "cases" else "eventos"
+    # Title
+    metric_name = "cases" if metric == "cases" else "events"
     fig = go.Figure(data=hm)
     fig.update_layout(
-        title=f"👥 Recursos × Roles — {metric_name}{title_suffix}",
+        title=f"👥 Resources × Roles — {metric_name}{title_suffix}",
         height=height,
         plot_bgcolor=(p['SURFACE'] if p else 'white'),
         paper_bgcolor=(p['SURFACE'] if p else 'white'),
         font=dict(color=(p['TEXT'] if p else '#0f172a'), size=12),
         margin=dict(l=10, r=10, t=48, b=10),
         xaxis=dict(
-            title=("Rol" if not swap_axes else "Recurso"),
+            title=("Role" if not swap_axes else "Resource"),
             showgrid=False,
             tickangle=45,
             tickfont=dict(size=10, color=(p['SOFT'] if p else '#64748b')),
             title_font=dict(size=12, color=(p['SOFT'] if p else '#64748b')),
         ),
         yaxis=dict(
-            title=("Recurso" if not swap_axes else "Rol"),
+            title=("Resource" if not swap_axes else "Role"),
             showgrid=False,
             automargin=True,
             tickfont=dict(size=10, color=(p['SOFT'] if p else '#64748b')),
@@ -479,13 +471,13 @@ def create_resource_role_heatmap(
 
 
 def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selected_month: str = None, show_summary: bool = True) -> go.Figure:
-    """Crea un gráfico de tendencia temporal DIARIA con resumen desplegable"""
+    """Creates a DAILY temporal trend chart with expandable summary"""
     
-    # Verificar que tenemos la columna de timestamp
+    # Verify we have timestamp column
     if 'time:timestamp' not in df.columns:
         fig = go.Figure()
         fig.update_layout(
-            title="No hay datos de timestamp disponibles",
+            title="No timestamp data available",
             height=400,
             plot_bgcolor=p['SURFACE'] if p else 'white',
             paper_bgcolor=p['SURFACE'] if p else 'white',
@@ -493,7 +485,7 @@ def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selec
         )
         return fig
     
-    # Convertir a datetime y limpiar
+    # Convert to datetime and clean
     df_temp = df.copy()
     df_temp['time:timestamp'] = pd.to_datetime(df_temp['time:timestamp'], errors='coerce')
     df_temp = df_temp.dropna(subset=['time:timestamp'])
@@ -501,7 +493,7 @@ def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selec
     if df_temp.empty:
         fig = go.Figure()
         fig.update_layout(
-            title="No hay datos de timestamp válidos",
+            title="No valid timestamp data",
             height=400,
             plot_bgcolor=p['SURFACE'] if p else 'white',
             paper_bgcolor=p['SURFACE'] if p else 'white',
@@ -509,9 +501,9 @@ def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selec
         )
         return fig
     
-    # Filtrar por mes seleccionado
+    # Filter by selected month
     df_filtered = pd.DataFrame()
-    month_name = "Mes desconocido"
+    month_name = "Unknown month"
     
     try:
         if selected_month:
@@ -532,11 +524,11 @@ def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selec
             month_name = most_recent_month.strftime("%B %Y")
             
     except Exception as e:
-        st.error(f"Error al filtrar por mes: {str(e)}")
+        st.error(f"Error filtering by month: {str(e)}")
         df_filtered = df_temp
-        month_name = "Todos los meses"
+        month_name = "All months"
     
-    # Agrupar por DÍA
+    # Group by DAY
     if not df_filtered.empty:
         daily_events = df_filtered.set_index('time:timestamp').resample('D').size()
     else:
@@ -545,7 +537,7 @@ def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selec
     if daily_events.empty:
         fig = go.Figure()
         fig.update_layout(
-            title=f"No hay datos para {month_name}",
+            title=f"No data for {month_name}",
             height=400,
             plot_bgcolor=p['SURFACE'] if p else 'white',
             paper_bgcolor=p['SURFACE'] if p else 'white',
@@ -553,7 +545,7 @@ def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selec
         )
         return fig
     
-    # Crear etiquetas
+    # Create labels
     date_labels = []
     full_dates = []
     day_names = []
@@ -564,7 +556,7 @@ def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selec
         full_dates.append(date.strftime("%Y-%m-%d"))
         day_names.append(date.strftime("%a"))
     
-    # Calcular estadísticas
+    # Calculate statistics
     total_events_month = daily_events.sum()
     
     if len(daily_events) > 0:
@@ -579,16 +571,16 @@ def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selec
         max_day_date = None
         working_days = 0
     
-    # Ajustar ancho
+    # Adjust width
     num_days = len(daily_events)
     base_width = 800
     dynamic_width = max(base_width, num_days * 60)
     
-    # Crear el gráfico de línea
+    # Create line chart
     fig = go.Figure()
     
     if not daily_events.empty:
-        # Línea principal
+        # Main line
         fig.add_trace(go.Scatter(
             x=date_labels,
             y=daily_events.values,
@@ -609,14 +601,14 @@ def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selec
             fillcolor=f"rgba({int(p['ACCENT'][1:3], 16) if p else 37}, {int(p['ACCENT'][3:5], 16) if p else 99}, {int(p['ACCENT'][5:7], 16) if p else 235}, 0.1)" if p else 'rgba(37, 99, 235, 0.1)',
             hovertemplate=(
                 "<b>%{customdata[1]} %{x} (%{customdata[0]})</b><br>" +
-                "Eventos: <b>%{y:,.0f}</b><br>" +
+                "Events: <b>%{y:,.0f}</b><br>" +
                 "<extra></extra>"
             ),
             customdata=list(zip(day_names, full_dates)),
-            name='Eventos diarios'
+            name='Daily events'
         ))
     
-    # Configuración de layout
+    # Layout configuration
     grid_color = p['BORDER'] if p else '#e5e7eb'
     
     fig.update_layout(
@@ -628,7 +620,7 @@ def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selec
         margin=dict(l=60, r=40, t=80, b=60),
         showlegend=False,
         xaxis=dict(
-            title='Día del Mes',
+            title='Day of Month',
             gridcolor=grid_color,
             gridwidth=1,
             showline=True,
@@ -641,7 +633,7 @@ def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selec
             title_font=dict(size=12, color=p['SOFT'] if p else '#64748b')
         ),
         yaxis=dict(
-            title='Número de Eventos',
+            title='Number of Events',
             gridcolor=grid_color,
             gridwidth=1,
             showline=True,
@@ -667,17 +659,17 @@ def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selec
         )
     )
     
-    # MEJORA: Resumen desplegable con mejor diseño
+    # IMPROVEMENT: Expandable summary with better design
     annotations = []
     
     if show_summary:
-        # Resumen mejorado - más visible y atractivo
+        # Improved summary - more visible and attractive
         summary_text = (
-            f"📊 <b>Resumen del Mes</b><br>"
-            f"• Total: <b>{total_events_month:,.0f}</b> eventos<br>"
-            f"• Promedio/día: <b>{avg_daily:,.1f}</b><br>"
-            f"• Día pico: <b>{max_day:,.0f}</b> eventos<br>"
-            f"• Días activos: <b>{working_days}</b>"
+            f"📊 <b>Monthly Summary</b><br>"
+            f"• Total: <b>{total_events_month:,.0f}</b> events<br>"
+            f"• Average/day: <b>{avg_daily:,.1f}</b><br>"
+            f"• Peak day: <b>{max_day:,.0f}</b> events<br>"
+            f"• Active days: <b>{working_days}</b>"
         )
         
         annotations.append(dict(
@@ -698,19 +690,19 @@ def create_monthly_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, selec
     return fig
 
 def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None, 
-                              semester: str = "Enero-Junio", selected_year: int = None, 
+                              semester: str = "January-June", selected_year: int = None, 
                               show_summary: bool = True) -> go.Figure:
-    """Crea un gráfico de tendencia SEMESTRAL DIARIA con resumen desplegable"""
+    """Creates a SEMESTER DAILY trend chart with expandable summary"""
     
-    month_names_es = {
-        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
-        7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+    month_names_en = {
+        1: "January", 2: "February", 3: "March", 4: "April", 5: "May", 6: "June",
+        7: "July", 8: "August", 9: "September", 10: "October", 11: "November", 12: "December"
     }
     
     if 'time:timestamp' not in df.columns:
         fig = go.Figure()
         fig.update_layout(
-            title="No hay datos de timestamp disponibles",
+            title="No timestamp data available",
             height=400,
             plot_bgcolor=p['SURFACE'] if p else 'white',
             paper_bgcolor=p['SURFACE'] if p else 'white',
@@ -718,7 +710,7 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
         )
         return fig
     
-    # Convertir a datetime y limpiar
+    # Convert to datetime and clean
     df_temp = df.copy()
     df_temp['time:timestamp'] = pd.to_datetime(df_temp['time:timestamp'], errors='coerce')
     df_temp = df_temp.dropna(subset=['time:timestamp'])
@@ -726,7 +718,7 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
     if df_temp.empty:
         fig = go.Figure()
         fig.update_layout(
-            title="No hay datos de timestamp válidos",
+            title="No valid timestamp data",
             height=400,
             plot_bgcolor=p['SURFACE'] if p else 'white',
             paper_bgcolor=p['SURFACE'] if p else 'white',
@@ -734,15 +726,15 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
         )
         return fig
     
-    # Determinar meses del semestre
-    if semester == "Enero-Junio":
+    # Determine semester months
+    if semester == "January-June":
         target_months = [1, 2, 3, 4, 5, 6]
-        semester_name = "Enero-Junio"
+        semester_name = "January-June"
     else:
         target_months = [7, 8, 9, 10, 11, 12]
-        semester_name = "Julio-Diciembre"
+        semester_name = "July-December"
     
-    # Usar el año seleccionado o determinar automáticamente
+    # Use selected year or determine automatically
     available_years = get_available_years(df_temp)
     
     if selected_year is None:
@@ -751,7 +743,7 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
         else:
             selected_year = datetime.now().year
     
-    # Filtrar datos por semestre y año específico
+    # Filter data by specific semester and year
     try:
         mask = (df_temp['time:timestamp'].dt.year == selected_year) & (df_temp['time:timestamp'].dt.month.isin(target_months))
         df_semester = df_temp[mask]
@@ -759,13 +751,13 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
         if not df_semester.empty:
             daily_events = df_semester.set_index('time:timestamp').resample('D').size()
             
-            # Crear etiquetas detalladas
+            # Create detailed labels
             month_day_labels = []
             full_dates = []
             day_names = []
             
             for date in daily_events.index:
-                month_day = f"{date.day} {month_names_es[date.month][:3]}"
+                month_day = f"{date.day} {month_names_en[date.month][:3]}"
                 month_day_labels.append(month_day)
                 full_dates.append(date.strftime("%d %B %Y"))
                 day_names.append(date.strftime("%A"))
@@ -773,7 +765,7 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
             total_events_semester = daily_events.sum()
             num_days = len(daily_events)
             
-            # Calcular estadísticas
+            # Calculate statistics
             if len(daily_events) > 0:
                 max_day = daily_events.max()
                 avg_daily = daily_events.mean()
@@ -800,7 +792,7 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
             weekly_avg = 0
         
     except Exception as e:
-        st.error(f"Error al procesar datos semestrales: {str(e)}")
+        st.error(f"Error processing semester data: {str(e)}")
         daily_events = pd.Series(dtype=int)
         month_day_labels = []
         total_events_semester = 0
@@ -811,11 +803,11 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
         working_days = 0
         weekly_avg = 0
     
-    # Crear gráfico
+    # Create chart
     fig = go.Figure()
     
     if not daily_events.empty:
-        # Línea principal
+        # Main line
         fig.add_trace(go.Scatter(
             x=month_day_labels,
             y=daily_events.values,
@@ -836,15 +828,15 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
             fillcolor=f"rgba({int(p['ACCENT'][1:3], 16) if p else 37}, {int(p['ACCENT'][3:5], 16) if p else 99}, {int(p['ACCENT'][5:7], 16) if p else 235}, 0.08)" if p else 'rgba(37, 99, 235, 0.08)',
             hovertemplate=(
                 "<b>%{customdata[1]}</b><br>" +
-                "Día: %{customdata[0]}<br>" +
-                "Eventos: <b>%{y:,.0f}</b><br>" +
+                "Day: %{customdata[0]}<br>" +
+                "Events: <b>%{y:,.0f}</b><br>" +
                 "<extra></extra>"
             ),
             customdata=list(zip(day_names, full_dates)),
-            name='Eventos diarios'
+            name='Daily events'
         ))
         
-        # Línea de promedio móvil
+        # Moving average line
         if len(daily_events) > 7:
             moving_avg = daily_events.rolling(window=7, center=True).mean()
             fig.add_trace(go.Scatter(
@@ -856,15 +848,15 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
                     width=2,
                     dash='dash'
                 ),
-                name='Promedio móvil (7 días)',
+                name='Moving average (7 days)',
                 hovertemplate=(
-                    "<b>Promedio móvil (7 días)</b><br>" +
-                    "Eventos: <b>%{y:,.1f}</b><br>" +
+                    "<b>Moving average (7 days)</b><br>" +
+                    "Events: <b>%{y:,.1f}</b><br>" +
                     "<extra></extra>"
                 )
             ))
     
-    # Configuración del layout
+    # Layout configuration
     grid_color = p['BORDER'] if p else '#e5e7eb'
     
     num_days = len(daily_events)
@@ -889,7 +881,7 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
             bordercolor=p['BORDER'] if p else '#e5e7eb'
         ),
         xaxis=dict(
-            title='Días del Semestre',
+            title='Days of Semester',
             gridcolor=grid_color,
             gridwidth=1,
             showline=True,
@@ -900,7 +892,7 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
             title_font=dict(size=11, color=p['SOFT'] if p else '#64748b')
         ),
         yaxis=dict(
-            title='Número de Eventos Diarios',
+            title='Number of Daily Events',
             gridcolor=grid_color,
             gridwidth=1,
             showline=True,
@@ -926,17 +918,17 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
         )
     )
     
-    # MEJORA: Resumen desplegable con mejor diseño
+    # IMPROVEMENT: Expandable summary with better design
     annotations = []
     
     if show_summary:
-        # Resumen mejorado - más visible y atractivo
+        # Improved summary - more visible and attractive
         summary_text = (
-            f"📈 <b>Resumen Semestral</b><br>"
-            f"• Total: <b>{total_events_semester:,.0f}</b> eventos<br>"
-            f"• Promedio/día: <b>{avg_daily:,.1f}</b><br>"
-            f"• Día pico: <b>{max_day:,.0f}</b> eventos<br>"
-            f"• Días activos: <b>{working_days}/{num_days}</b>"
+            f"📈 <b>Semester Summary</b><br>"
+            f"• Total: <b>{total_events_semester:,.0f}</b> events<br>"
+            f"• Average/day: <b>{avg_daily:,.1f}</b><br>"
+            f"• Peak day: <b>{max_day:,.0f}</b> events<br>"
+            f"• Active days: <b>{working_days}/{num_days}</b>"
         )
         
         annotations.append(dict(
@@ -958,7 +950,7 @@ def create_semester_trend_chart(df: pd.DataFrame, p: Dict[str, str] = None,
 
     
 def get_available_months(df: pd.DataFrame) -> List[str]:
-    """Obtiene la lista de meses disponibles en formato YYYY-MM - MEJORADA"""
+    """Gets the list of available months in YYYY-MM format - IMPROVED"""
     if df is None or 'time:timestamp' not in df.columns:
         return []
     
@@ -969,17 +961,17 @@ def get_available_months(df: pd.DataFrame) -> List[str]:
     if df_temp.empty:
         return []
     
-    # Extraer año-mes y obtener valores únicos
+    # Extract year-month and get unique values
     available_months = df_temp['time:timestamp'].dt.to_period('M').unique()
-    available_months = sorted(available_months, reverse=True)  # Más recientes primero
+    available_months = sorted(available_months, reverse=True)  # Most recent first
     
-    # Convertir a formato string "YYYY-MM"
+    # Convert to string format "YYYY-MM"
     month_options = [f"{period.year}-{period.month:02d}" for period in available_months]
     
     return month_options
 
 def get_available_years(df: pd.DataFrame) -> List[int]:
-    """Obtiene la lista de años disponibles en los datos - VERSIÓN CORREGIDA"""
+    """Gets the list of available years in the data - CORRECTED VERSION"""
     if df is None or 'time:timestamp' not in df.columns:
         return []
     
@@ -990,50 +982,50 @@ def get_available_years(df: pd.DataFrame) -> List[int]:
     if df_temp.empty:
         return []
     
-    # Extraer año y obtener valores únicos
+    # Extract year and get unique values
     available_years = df_temp['time:timestamp'].dt.year.unique()
     
-    # Convertir a lista de Python y ordenar
+    # Convert to Python list and sort
     if hasattr(available_years, 'tolist'):
         available_years = available_years.tolist()
     else:
-        # Si ya es una lista o no tiene el método tolist
+        # If already a list or doesn't have tolist method
         available_years = list(available_years)
     
-    available_years = sorted(available_years, reverse=True)  # Más recientes primero
+    available_years = sorted(available_years, reverse=True)  # Most recent first
     
     return available_years
 
 def get_semester_data_for_year(df: pd.DataFrame, semester: str, year: int) -> pd.Series:
-    """Obtiene datos semestrales para un año específico"""
-    month_names_es = {
-        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
-        7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+    """Gets semester data for a specific year"""
+    month_names_en = {
+        1: "January", 2: "February", 3: "March", 4: "April", 5: "May", 6: "June",
+        7: "July", 8: "August", 9: "September", 10: "October", 11: "November", 12: "December"
     }
     
     df_temp = df.copy()
     df_temp['time:timestamp'] = pd.to_datetime(df_temp['time:timestamp'], errors='coerce')
     df_temp = df_temp.dropna(subset=['time:timestamp'])
     
-    if semester == "Enero-Junio":
+    if semester == "January-June":
         target_months = [1, 2, 3, 4, 5, 6]
     else:
         target_months = [7, 8, 9, 10, 11, 12]
     
-    # Filtrar por año y meses específicos
+    # Filter by year and specific months
     mask = (df_temp['time:timestamp'].dt.year == year) & (df_temp['time:timestamp'].dt.month.isin(target_months))
     df_semester = df_temp[mask]
     
     if not df_semester.empty:
         daily_events = df_semester.set_index('time:timestamp').resample('D').size()
         
-        # Crear etiquetas detalladas
+        # Create detailed labels
         month_day_labels = []
         full_dates = []
         day_names = []
         
         for date in daily_events.index:
-            month_day = f"{date.day} {month_names_es[date.month][:3]}"
+            month_day = f"{date.day} {month_names_en[date.month][:3]}"
             month_day_labels.append(month_day)
             full_dates.append(date.strftime("%d %B %Y"))
             day_names.append(date.strftime("%A"))
@@ -1043,17 +1035,17 @@ def get_semester_data_for_year(df: pd.DataFrame, semester: str, year: int) -> pd
         return pd.Series(dtype=int), [], [], []
 
 def get_month_display_names(month_list: List[str]) -> List[str]:
-    """Convierte lista de YYYY-MM a nombres legibles"""
+    """Converts YYYY-MM list to readable names"""
     display_names = []
     for month_str in month_list:
         try:
             date_obj = pd.to_datetime(month_str + "-01")
-            # Formato en español
-            month_names_es = {
-                1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
-                7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+            # Format in English
+            month_names_en = {
+                1: "January", 2: "February", 3: "March", 4: "April", 5: "May", 6: "June",
+                7: "July", 8: "August", 9: "September", 10: "October", 11: "November", 12: "December"
             }
-            month_name = month_names_es[date_obj.month]
+            month_name = month_names_en[date_obj.month]
             display_name = f"{month_name} {date_obj.year}"
             display_names.append(display_name)
         except:
@@ -1064,12 +1056,12 @@ def get_month_display_names(month_list: List[str]) -> List[str]:
 def render_interactive_activity_chart(fig: go.Figure, p: Dict[str, str], 
                                     height: int = 500, instance_token: str = ""):
     """
-    Renderiza el gráfico de actividades con controles interactivos
+    Renders activity chart with interactive controls
     """
     import hashlib
     import json
     
-    # Convertir figura a JSON
+    # Convert figure to JSON
     plot_json = fig.to_json()
     instance_id = hashlib.md5((plot_json + instance_token).encode()).hexdigest()[:8]
     
@@ -1129,7 +1121,7 @@ def render_interactive_activity_chart(fig: go.Figure, p: Dict[str, str],
           padding: 10px;
         }}
         
-        /* Mejoras para el tooltip de Plotly */
+        /* Improvements for Plotly tooltip */
         .js-plotly-plot .plotly .hoverlayer .hovertext {{
           background: {'rgba(15,23,42,0.95)' if p['MODE']=='dark' else 'rgba(255,255,255,0.95)'} !important;
           border: 1px solid {p['BORDER']} !important;
@@ -1143,20 +1135,20 @@ def render_interactive_activity_chart(fig: go.Figure, p: Dict[str, str],
       </style>
       
       <div id="{controls_id}">
-        <label for="topN-{instance_id}">Mostrar:</label>
+        <label for="topN-{instance_id}">Show:</label>
         <select id="topN-{instance_id}">
           <option value="5">Top 5</option>
           <option value="8" selected>Top 8</option>
           <option value="15">Top 15</option>
           <option value="20">Top 20</option>
-          <option value="0">Todas</option>
+          <option value="0">All</option>
         </select>
         
-        <label for="sort-{instance_id}" style="margin-left: 8px;">Orden:</label>
+        <label for="sort-{instance_id}" style="margin-left: 8px;">Order:</label>
         <select id="sort-{instance_id}">
-          <option value="cases" selected>Por Casos</option>
-          <option value="events">Por Eventos</option>
-          <option value="name">Por Nombre</option>
+          <option value="cases" selected>By Cases</option>
+          <option value="events">By Events</option>
+          <option value="name">By Name</option>
         </select>
       </div>
       
@@ -1175,13 +1167,13 @@ def render_interactive_activity_chart(fig: go.Figure, p: Dict[str, str],
         let currentChart = null;
         
         function renderChart(topN = 8, sortBy = 'cases') {{
-          // Aquí se implementaría la lógica de filtrado y ordenamiento
-          // Por ahora usamos los datos directamente
+          // Filtering and sorting logic would be implemented here
+          // For now we use data directly
           if (currentChart) {{
             Plotly.purge(chartDiv);
           }}
           
-          // Ajustar altura dinámica
+          // Adjust dynamic height
           const dataLength = plotData.data[0].y.length;
           const dynamicHeight = Math.max(400, dataLength * 35);
           chartDiv.style.height = dynamicHeight + 'px';
@@ -1194,12 +1186,12 @@ def render_interactive_activity_chart(fig: go.Figure, p: Dict[str, str],
             responsive: true
           }});
           
-          // Ajustar el contenedor padre
+          // Adjust parent container
           const wrap = document.getElementById('{wrap_id}');
           wrap.style.height = (dynamicHeight + 20) + 'px';
         }}
         
-        // Event listeners para controles
+        // Event listeners for controls
         topNSelect.addEventListener('change', function(e) {{
           const topN = parseInt(e.target.value);
           const sortBy = sortSelect.value;
@@ -1212,10 +1204,10 @@ def render_interactive_activity_chart(fig: go.Figure, p: Dict[str, str],
           renderChart(topN, sortBy);
         }});
         
-        // Renderizar inicialmente
+        // Initial render
         renderChart(8, 'cases');
         
-        // Manejar redimensionamiento
+        // Handle resizing
         window.addEventListener('resize', function() {{
           if (currentChart) {{
             Plotly.Plots.resize(chartDiv);
@@ -1240,7 +1232,7 @@ def render_interactive_activity_chart(fig: go.Figure, p: Dict[str, str],
 
 
 # ------------------------------------------------------------
-# Paletas (light/dark)
+# Palettes (light/dark)
 # ------------------------------------------------------------
 def get_palette(mode: str) -> Dict[str, str]:
     mode = (mode or "dark").lower()
@@ -1293,7 +1285,7 @@ def get_palette(mode: str) -> Dict[str, str]:
 
 
 # ------------------------------------------------------------
-# CSS inyectable según paleta (ojo: llaves {{ }})
+# Injectable CSS according to palette (careful: braces {{ }})
 # ------------------------------------------------------------
 def inject_css(p: Dict[str, str]) -> None:
     st.markdown(f"""
@@ -1310,7 +1302,7 @@ def inject_css(p: Dict[str, str]) -> None:
 
     section[data-testid="stSidebar"] > div {{ background: var(--bg); }}
     div[data-testid="stSidebar"]::before {{
-      content: "Interfaz"; position: sticky; top: 0; left: 0;
+      content: "Interface"; position: sticky; top: 0; left: 0;
       background: var(--accent2); color: #001222; font-weight: 800;
       padding: .35rem .7rem; border-radius: .35rem; margin: .5rem;
       box-shadow: 0 2px 0 rgba(0,0,0,.35);
@@ -1329,7 +1321,7 @@ def inject_css(p: Dict[str, str]) -> None:
       background: var(--card); border:1px solid var(--border);
       border-radius:.9rem; padding:1rem; color:var(--text);
       box-shadow: 0 10px 26px rgba(0,0,0,.25);
-      /* NUEVO: separación vertical consistente entre cajas */
+      /* NEW: consistent vertical spacing between boxes */
       margin-bottom: 1rem;
     }}
     .dashed {{ border:1.5px dashed var(--border); border-radius:.8rem; padding:1rem; color:var(--soft); }}
@@ -1365,7 +1357,7 @@ def inject_css(p: Dict[str, str]) -> None:
     }}
     [data-testid="stFileUploaderDropzone"] p {{ color: var(--soft) !important; opacity: .95 !important; }}
 
-    /* Tarjetas de métricas */
+    /* Metric cards */
     .metric-card {{ background: var(--card); border:1px solid var(--border);
                     border-radius: 14px; padding: 12px 14px; box-shadow: 0 8px 24px rgba(0,0,0,.18); }}
     .metric-name {{ font-weight:700; font-size:.95rem; color: var(--soft); }}
@@ -1374,7 +1366,7 @@ def inject_css(p: Dict[str, str]) -> None:
                    border-radius: 999px; border:1px solid var(--border); }}
     .metric-bar > span {{ display:block; height:100%; background: var(--accent); border-radius: 999px; }}
 
-    /* Encabezado con ayuda (a la derecha) */
+    /* Header with help (to the right) */
     .metrics-head{{display:flex;align-items:center;gap:.5rem;margin:.25rem 0 .6rem}}
     .metrics-head .title{{font-weight:800;font-size:1.05rem}}
     .metrics-head .spacer{{flex:1}}
@@ -1397,17 +1389,17 @@ def inject_css(p: Dict[str, str]) -> None:
     .tip ul{{margin:.3rem 0 0 1rem}}
     .tip li{{margin:.25rem 0; color:var(--soft)}}
 
-    /* Tabla de puntuaciones S */
+    /* S score table */
     .score-table table{{width:100%;border-collapse:separate;border-spacing:0;overflow:hidden;
                         border:1px solid var(--border);border-radius:12px;background:var(--card)}}
     .score-table thead th{{text-align:left;padding:.65rem .8rem;border-bottom:1px solid var(--border);color:var(--soft)}}
     .score-table tbody td{{padding:.70rem .8rem;border-bottom:1px solid {p['BORDER']};color:var(--text)}}
     .score-table tbody tr:last-child td{{border-bottom:none}}
 
-    /* Subtítulos generados desde separadores -> negrita + un poco más grandes */
+    /* Subtitles generated from separators -> bold + slightly larger */
     .why-subtitle{{margin:.9rem 0 .45rem 0;font-weight:900;font-size:1.18rem;color:var(--text)}}
 
-    /* Texto de radios visible en ambos modos */
+    /* Radio text visible in both modes */
     .stRadio [data-testid="stWidgetLabel"] p,
     .stRadio [data-testid="stWidgetLabel"] span,
     .stRadio label div p,
@@ -1439,20 +1431,20 @@ def inject_css(p: Dict[str, str]) -> None:
         background: {p['ACCENT']}10 !important;
     }}
 
-    /* Radio seleccionado */
+    /* Selected radio */
     .stRadio [role="radiogroup"] label[data-baseweb="radio"][class*="selected"] {{
         background: {p['ACCENT']}20 !important;
         border-color: {p['ACCENT']} !important;
         color: {p['TEXT']} !important;
     }}
 
-    /* --- Radios sin “box” (solo para el selector de vista) --- */
+    /* --- Radios without "box" (only for view selector) --- */
     .no-pill-radio [role="radiogroup"] > * {{
       background: transparent !important;
       border: 0 !important;
       box-shadow: none !important;
       padding: 2px 8px !important;
-      margin: 0 6px 0 0 !important;   /* margen antiguo (lo anulamos abajo con gap) */
+      margin: 0 6px 0 0 !important;   /* old margin (we override below with gap) */
       border-radius: 0 !important;
     }}
     .no-pill-radio [role="radiogroup"] [aria-checked="true"],
@@ -1460,13 +1452,13 @@ def inject_css(p: Dict[str, str]) -> None:
       background: transparent !important;
     }}
 
-    /* 🔥 NUEVO: layout & separación real entre opciones de radio */
+    /* 🔥 NEW: layout & real separation between radio options */
     .stRadio [role="radiogroup"] {{
       display: flex;
       flex-wrap: wrap;
-      gap: 8px 12px !important;   /* espacio entre “píldoras”/opciones */
+      gap: 8px 12px !important;   /* space between "pills"/options */
     }}
-    /* Anula márgenes para que gane el gap */
+    /* Override margins so gap wins */
     .no-pill-radio [role="radiogroup"] > *,
     .stRadio [role="radiogroup"] > label,
     .stRadio [role="radiogroup"] > div {{
@@ -1478,7 +1470,7 @@ def inject_css(p: Dict[str, str]) -> None:
 
 
 # ------------------------------------------------------------
-# Carga pickle segura - VERSIÓN CORREGIDA
+# Safe pickle loading - CORRECTED VERSION
 # ------------------------------------------------------------
 class CustomUnpickler(pickle.Unpickler):
     def find_class(self, module: str, name: str):
@@ -1492,7 +1484,7 @@ class CustomUnpickler(pickle.Unpickler):
             return Dummy
 
 
-# FUNCIONES LOAD CORREGIDAS - con state_file_path como parámetro para invalidar cache
+# CORRECTED LOAD FUNCTIONS - with state_file_path as parameter to invalidate cache
 @st.cache_data(show_spinner=False)
 def load_best_model(state_file_path: str):
     if state_file_path and os.path.exists(state_file_path):
@@ -1533,7 +1525,7 @@ def load_agent8(state_file_path: str):
         return state.get("agente8", [])
     return []
 
-# WRAPPERS para mantener compatibilidad (opcional, o actualiza todas las llamadas)
+# WRAPPERS to maintain compatibility (optional, or update all calls)
 def get_current_best_model():
     state_path = st.session_state.get('state_file_path', '')
     return load_best_model(state_path)
@@ -1562,7 +1554,7 @@ def get_log_summaries_strict() -> List[Tuple[str, str]]:
 
     # agente3
     try:
-        a3 = get_current_agent3()  # Usar la función corregida
+        a3 = get_current_agent3()  # Use corrected function
         s3 = a3.get("log_summary")
         if isinstance(s3, str) and s3.strip():
             out.append(("agente3", convert_separators_to_subtitles(s3.strip())))
@@ -1573,23 +1565,23 @@ def get_log_summaries_strict() -> List[Tuple[str, str]]:
 
 def get_agent8_problem_pairs() -> List[Dict[str, str]]:
     """
-    Mapea:
-      - 'problem_description' (o 'problem_descripcion') → 'Problema'
-      - 'recommendation' → 'Solución'
-    y devuelve una lista de {'Problema': ..., 'Solución': ...}
+    Maps:
+      - 'problem_description' (or 'problem_descripcion') → 'Problem'
+      - 'recommendation' → 'Solution'
+    and returns a list of {'Problem': ..., 'Solution': ...}
     """
     items = get_current_agent8()
     pairs: List[Dict[str, str]] = []
     for it in items:
-            problema = (
+            problem = (
                 it.get("problem_description")
                 or it.get("problem_descripcion") 
             )
-            solucion = it.get("recommendation")
-            if problema and solucion:
+            solution = it.get("recommendation")
+            if problem and solution:
                 pairs.append({
-                    "Problema": str(problema).strip(),
-                    "Solución": str(solucion).strip()
+                    "Problem": str(problem).strip(),
+                    "Solution": str(solution).strip()
                 })
     return pairs
 
@@ -1603,12 +1595,12 @@ def detect_model_type(model_name: str) -> str:
 
 
 # ------------------------------------------------------------
-# Traducción de etiquetas
+# Label translation
 # ------------------------------------------------------------
 FRIENDLY_ALIASES = {
-    "source": "Inicio", "start": "Inicio", "start_event": "Inicio",
-    "sink": "Fin", "end": "Fin", "end_event": "Fin",
-    "tau": "Paso interno (τ)", "hid": "Paso interno (τ)",
+    "source": "Start", "start": "Start", "start_event": "Start",
+    "sink": "End", "end": "End", "end_event": "End",
+    "tau": "Internal step (τ)", "hid": "Internal step (τ)",
 }
 def prettify_label(raw: str) -> str:
     if raw is None: return ""
@@ -1617,32 +1609,32 @@ def prettify_label(raw: str) -> str:
         if low == k or low.startswith(f"{k}_"): return v
     for pref in ("p_","t_","hid_","tau_","place_","trans_"):
         if low.startswith(pref): s = s[len(pref):]; low = s.lower(); break
-    if low in ("hid","tau","silent","none",""): return "Paso interno (τ)"
+    if low in ("hid","tau","silent","none",""): return "Internal step (τ)"
     s = " ".join(s.replace("_"," ").split()).strip()
-    return s[:1].upper()+s[1:] if s else "Paso interno (τ)"
+    return s[:1].upper()+s[1:] if s else "Internal step (τ)"
 
 
 # ------------------------------------------------------------
-# Helpers: métricas
+# Helpers: metrics
 # ------------------------------------------------------------
 _METRIC_ALIASES = {
     "fitness": "Fitness",
-    "alignment_fitness": "Fitness (alineación)",
+    "alignment_fitness": "Fitness (alignment)",
     "replay_fitness": "Fitness (replay)",
-    "log_fitness": "Fitness (registro)",
-    "average_trace_fitness": "Fitness (promedio traza)",
-    "perc_fit_traces": "Trazas conformes (%)",
-    "percentage_of_fitting_traces": "Trazas conformes (%)",
-    "precision": "Precisión",
-    "behavioral_precision": "Precisión (conductual)",
-    "generalization": "Generalización",
-    "simplicity": "Simplicidad",
+    "log_fitness": "Fitness (log)",
+    "average_trace_fitness": "Fitness (average trace)",
+    "perc_fit_traces": "Conforming traces (%)",
+    "percentage_of_fitting_traces": "Conforming traces (%)",
+    "precision": "Precision",
+    "behavioral_precision": "Precision (behavioral)",
+    "generalization": "Generalization",
+    "simplicity": "Simplicity",
     "fscore": "F1-score",
     "f1": "F1-score",
-    "soundness": "Corrección (soundness)",
-    "completeness": "Completitud",
-    "coverage": "Cobertura",
-    "score": "Puntuación de selección",
+    "soundness": "Soundness",
+    "completeness": "Completeness",
+    "coverage": "Coverage",
+    "score": "Selection score",
 }
 
 def _flatten(d: Dict, prefix: str = "") -> Dict[str, float]:
@@ -1690,13 +1682,13 @@ def normalize_metrics_for_display(metrics: Dict[str, float]) -> Dict[str, float]
     # % -> 0-1
     for k in list(out.keys()):
         k_low = k.lower()
-        if "trazas" in k_low and "%" in k_low:
-            try: out["Trazas conformes (0-1)"] = float(out.pop(k)) / 100.0
-            except Exception: out["Trazas conformes (0-1)"] = out.pop(k)
-    if "Fitness (log)" in out and "Fitness (registro)" not in out:
-        out["Fitness (registro)"] = out.pop("Fitness (log)")
-    if "Score de selección" in out and "Puntuación de selección" not in out:
-        out["Puntuación de selección"] = out.pop("Score de selección")
+        if "traces" in k_low and "%" in k_low:
+            try: out["Conforming traces (0-1)"] = float(out.pop(k)) / 100.0
+            except Exception: out["Conforming traces (0-1)"] = out.pop(k)
+    if "Fitness (log)" in out and "Fitness (log)" not in out:
+        out["Fitness (log)"] = out.pop("Fitness (log)")
+    if "Selection score" in out and "Selection score" not in out:
+        out["Selection score"] = out.pop("Selection score")
     return out
 
 def get_output_summary_from_state(best_model: Dict) -> str:
@@ -1715,7 +1707,7 @@ def get_output_summary_from_state(best_model: Dict) -> str:
 
 
 # ------------------------------------------------------------
-# Parser del output_summary (tabla + subtítulos + limpieza)
+# output_summary parser (table + subtitles + cleaning)
 # ------------------------------------------------------------
 _SCORE_ROW_RE = re.compile(
     r"""(?ix)
@@ -1739,7 +1731,7 @@ def parse_score_rows(text: str) -> List[Tuple[str, float, float, float]]:
 
 def build_scores_table_html(rows: List[Tuple[str,float,float,float]]) -> str:
     if not rows: return ""
-    head = "<div class='score-table'><table><thead><tr><th>Modelo</th><th>S_inicial</th><th>Penalización</th><th>S_final</th></tr></thead><tbody>"
+    head = "<div class='score-table'><table><thead><tr><th>Model</th><th>S_initial</th><th>Penalty</th><th>S_final</th></tr></thead><tbody>"
     body = [
         f"<tr><td>{name}</td><td>{si:.3f}</td><td>{pe:.3f}</td><td>{sf:.3f}</td></tr>"
         for (name, si, pe, sf) in rows
@@ -1748,15 +1740,15 @@ def build_scores_table_html(rows: List[Tuple[str,float,float,float]]) -> str:
     return head + "".join(body) + tail
 
 def strip_json_output_block(txt: str) -> str:
-    # eliminar JSON_OUTPUT en bloque o línea
+    # remove JSON_OUTPUT in block or line
     txt = re.sub(r"(?is)\n?JSON[_\-\s]*OUTPUT\s*:.*?$", "", txt)
     txt = re.sub(r"(?is)```.*?JSON[_\-\s]*OUTPUT.*?```", "", txt)
     return txt.strip()
 
 def remove_inline_score_lines(s: str) -> str:
     """
-    Quita líneas-resumen del tipo:
-      'Heuristic Miner: S_initial=..., Penalty=..., S_final=...' (con o sin '|')
+    Removes summary lines of type:
+      'Heuristic Miner: S_initial=..., Penalty=..., S_final=...' (with or without '|')
     """
     out = []
     pat = re.compile(r"(S\s*[_\-\s]*initial|S\s*[_\-\s]*final|Penalty)\s*=", re.I)
@@ -1767,7 +1759,7 @@ def remove_inline_score_lines(s: str) -> str:
     return "\n".join(out)
 
 def _clean_candidate_name(name: str) -> str:
-    # quita pipes, bullets y guiones a izquierda/derecha y normaliza espacios
+    # remove pipes, bullets and dashes left/right and normalize spaces
     name = re.sub(r'^[\s\|\•\·\-\–\—]+', '', str(name))
     name = re.sub(r'[\s\|\•\·\-\–\—]+$', '', name)
     name = re.sub(r'\s+', ' ', name)
@@ -1775,10 +1767,10 @@ def _clean_candidate_name(name: str) -> str:
 
 def convert_separators_to_subtitles(md: str) -> str:
     """
-    Convierte separadores en subtítulos y elimina líneas con barras/guiones:
-      - '______  Texto'  -> <div class='why-subtitle'>Texto</div>
-      - Línea de sólo guiones/underscores seguida de texto en la sig. línea
-      - 'Title' seguido en la línea siguiente por '-----' -> subtítulo
+    Converts separators to subtitles and removes lines with bars/dashes:
+      - '______  Text'  -> <div class='why-subtitle'>Text</div>
+      - Line of only dashes/underscores followed by text in next line
+      - 'Title' followed in next line by '-----' -> subtitle
     """
     lines = md.splitlines()
     out = []
@@ -1819,14 +1811,14 @@ def convert_separators_to_subtitles(md: str) -> str:
 
     return "\n".join(out)
 
-# --- NUEVO: anclaje robusto EN/ES para la tabla ---
+# --- NEW: robust EN/ES anchoring for table ---
 def inject_marker_at_table_anchor(text: str) -> Tuple[str, bool]:
     if not text:
         return text, False
     patterns = [
         r"(?i)\bbelow\b[^.\n]{0,200}\b(one[\-\s]*line|summary)?\b[^.\n]{0,200}\btable\b[^:\n]*:?",     # EN
         r"(?i)\ba\s+continuaci[oó]n\b[^.\n]{0,200}\btabla\b[^:\n]*:?",                                 # ES
-        r"(?i)\b(se\s+mostrar[aá]|se\s+muestra|se\s+ver[aá])\b[^.\n]{0,200}\btabla\b[^:\n]*:?",        # ES variantes
+        r"(?i)\b(se\s+mostrar[aá]|se\s+muestra|se\s+ver[aá])\b[^.\n]{0,200}\btabla\b[^:\n]*:?",        # ES variants
         r"(?i)\b(siguiente|sig\.)\s+tabla\b[^:\n]*:?",                                                 # ES 'siguiente tabla'
     ]
     lines = text.splitlines(True)
@@ -1838,11 +1830,11 @@ def inject_marker_at_table_anchor(text: str) -> Tuple[str, bool]:
 
 def format_summary_with_table(summary: str) -> Tuple[str, str]:
     """
-    - Extrae filas S y construye tabla HTML
-    - Elimina JSON_OUTPUT
-    - Inserta [[SCORE_TABLE]] en la línea-ancla (EN/ES)
-    - Elimina la 'línea resumen' inline con S_initial/S_final para evitar duplicado
-    - Convierte separadores en subtítulos
+    - Extracts S rows and builds HTML table
+    - Removes JSON_OUTPUT
+    - Inserts [[SCORE_TABLE]] at anchor line (EN/ES)
+    - Removes inline 'summary line' with S_initial/S_final to avoid duplication
+    - Converts separators to subtitles
     """
     if not summary:
         return "", ""
@@ -1852,10 +1844,10 @@ def format_summary_with_table(summary: str) -> Tuple[str, str]:
 
     s = strip_json_output_block(summary)
 
-    # Colocar marcador en ancla (EN/ES)
+    # Place marker at anchor (EN/ES)
     s, placed = inject_marker_at_table_anchor(s)
 
-    # Fallback adicional por si el texto exacto EN aparece sin detectar
+    # Additional fallback in case exact EN text appears undetected
     if not placed:
         m = re.search(r"(?is)below\s+is\s+the\s+one[\-\u2013]?\s*line\s+table[^\n]*", s)
         if m:
@@ -1869,7 +1861,7 @@ def format_summary_with_table(summary: str) -> Tuple[str, str]:
 
 
 # ------------------------------------------------------------
-# Graphviz según paleta
+# Graphviz according to palette
 # ------------------------------------------------------------
 def build_petri_graph(net, im, fm, show_ids: bool, p: Dict[str,str]) -> graphviz.Digraph:
     dot = graphviz.Digraph("PetriNet", format="svg")
@@ -1887,9 +1879,9 @@ def build_petri_graph(net, im, fm, show_ids: bool, p: Dict[str,str]) -> graphviz
     for place in places:
         raw_id = getattr(place, "_Place__name","")
         if raw_id in im_names:
-            friendly, fill, fcolor = "Inicio", p["START_FILL"], p["START_TEXT"]
+            friendly, fill, fcolor = "Start", p["START_FILL"], p["START_TEXT"]
         elif raw_id in fm_names:
-            friendly, fill, fcolor = "Fin", p["END_FILL"], p["END_TEXT"]
+            friendly, fill, fcolor = "End", p["END_FILL"], p["END_TEXT"]
         else:
             friendly, fill, fcolor = prettify_label(raw_id), p["PLACE_FILL"], p["PLACE_TEXT"]
         label = f"{friendly} ({raw_id})" if (show_ids and raw_id and friendly != raw_id) else friendly
@@ -1924,7 +1916,7 @@ def render_interactive_svg(dot: graphviz.Digraph, p: Dict[str, str],
     import hashlib
     svg_text = dot.pipe(format="svg").decode("utf-8")
     
-    # ID único que incluye el instance_token
+    # Unique ID that includes instance_token
     instance_id = hashlib.md5((svg_text + instance_token).encode()).hexdigest()[:10]
     
     wrap_id = f"petri-wrap-{instance_id}"
@@ -1962,7 +1954,7 @@ def render_interactive_svg(dot: graphviz.Digraph, p: Dict[str, str],
         #{tools_id} button:hover {{ border-color:{p['ACCENT']}; color:{p['ACCENT']}; }}
         #{svg_id} {{ width:100% !important; height:100% !important; display:block; }}
         
-        /* Estados de carga mejorados */
+        /* Improved loading states */
         .petri-loading {{
           position: absolute;
           top: 50%;
@@ -1980,13 +1972,13 @@ def render_interactive_svg(dot: graphviz.Digraph, p: Dict[str, str],
       </style>
 
       <div id="{legend_id}" class="{'collapsed' if legend_collapsed else ''}">
-        <div class="hdr" id="{toggle_id}"><span>🛈</span><span>Leyenda</span></div>
+        <div class="hdr" id="{toggle_id}"><span>🛈</span><span>Legend</span></div>
         <div class="body">
-          <div class="row"><span class="dot" style="background:{p['START_FILL']}"></span> Inicio</div>
-          <div class="row"><span class="dot" style="background:{p['END_FILL']}"></span> Fin</div>
-          <div class="row"><span class="dot" style="background:{p['PLACE_FILL']}"></span> Estado</div>
-          <div class="row"><span class="sw"  style="background:{p['TRANS_FILL']}"></span> Actividad</div>
-          <div class="row"><span class="tau">τ</span> Paso interno (silencioso)</div>
+          <div class="row"><span class="dot" style="background:{p['START_FILL']}"></span> Start</div>
+          <div class="row"><span class="dot" style="background:{p['END_FILL']}"></span> End</div>
+          <div class="row"><span class="dot" style="background:{p['PLACE_FILL']}"></span> State</div>
+          <div class="row"><span class="sw"  style="background:{p['TRANS_FILL']}"></span> Activity</div>
+          <div class="row"><span class="tau">τ</span> Internal step (silent)</div>
         </div>
       </div>
 
@@ -2012,7 +2004,7 @@ def render_interactive_svg(dot: graphviz.Digraph, p: Dict[str, str],
           if (wrapEl && !wrapEl.querySelector('.petri-loading')) {{
             const loadingDiv = document.createElement('div');
             loadingDiv.className = 'petri-loading';
-            loadingDiv.innerHTML = 'Cargando visualización...';
+            loadingDiv.innerHTML = 'Loading visualization...';
             wrapEl.appendChild(loadingDiv);
           }}
         }}
@@ -2039,7 +2031,7 @@ def render_interactive_svg(dot: graphviz.Digraph, p: Dict[str, str],
             return;
           }}
 
-          // Verificar visibilidad con criterios más estrictos
+          // Check visibility with stricter criteria
           const rect = wrapEl.getBoundingClientRect();
           const style = window.getComputedStyle(wrapEl);
           const isVisible = rect.width > 50 && rect.height > 50 && 
@@ -2059,7 +2051,7 @@ def render_interactive_svg(dot: graphviz.Digraph, p: Dict[str, str],
 
           showLoading();
 
-          // Limpiar instancia anterior si existe
+          // Clean previous instance if exists
           if (panZoomInstance) {{
             try {{
               panZoomInstance.destroy();
@@ -2069,7 +2061,7 @@ def render_interactive_svg(dot: graphviz.Digraph, p: Dict[str, str],
             panZoomInstance = null;
           }}
 
-          // Preparar SVG con delay
+          // Prepare SVG with delay
           setTimeout(() => {{
             svg.removeAttribute('width');
             svg.removeAttribute('height');
@@ -2103,7 +2095,7 @@ def render_interactive_svg(dot: graphviz.Digraph, p: Dict[str, str],
                 }}
               }}
 
-              // Configurar botones con delays escalonados
+              // Configure buttons with staggered delays
               setTimeout(() => {{
                 const fitBtn = wrapEl.querySelector('[data-btn="fit"]');
                 const resetBtn = wrapEl.querySelector('[data-btn="reset"]');
@@ -2119,13 +2111,13 @@ def render_interactive_svg(dot: graphviz.Digraph, p: Dict[str, str],
                 if (zoutBtn) zoutBtn.onclick = function() {{ panZoomInstance.zoomOut(); }};
               }}, 150);
 
-              // Refits programados con delays crecientes
+              // Scheduled refits with increasing delays
               setTimeout(refit, 300);
               setTimeout(refit, 800);
               setTimeout(refit, 1500);
               setTimeout(refit, 2500);
 
-              // Ocultar loading después de que todo esté listo
+              // Hide loading after everything is ready
               setTimeout(hideLoading, 1000);
 
             }} catch(error) {{
@@ -2135,26 +2127,26 @@ def render_interactive_svg(dot: graphviz.Digraph, p: Dict[str, str],
           }}, 100);
         }}
 
-        // Estrategia de inicialización con delays múltiples
+        // Initialization strategy with multiple delays
         function startInitialization() {{
-          // Delay inicial para permitir que Streamlit renderice
+          // Initial delay to allow Streamlit to render
           setTimeout(() => {{
             initializePetri();
             
-            // Intentar nuevamente después de un tiempo por si hay delays de render
+            // Try again after some time in case of render delays
             setTimeout(initializePetri, 1000);
             setTimeout(initializePetri, 3000);
           }}, 500);
         }}
 
-        // Iniciar cuando esté listo
+        // Start when ready
         if (document.readyState === 'loading') {{
           document.addEventListener('DOMContentLoaded', startInitialization);
         }} else {{
           startInitialization();
         }}
 
-        // Leyenda toggle
+        // Legend toggle
         document.addEventListener('click', function(e) {{
           if (e.target.id === '{toggle_id}' || e.target.closest('#{toggle_id}')) {{
             const legend = document.getElementById('{legend_id}');
@@ -2162,7 +2154,7 @@ def render_interactive_svg(dot: graphviz.Digraph, p: Dict[str, str],
           }}
         }});
 
-        // Observar cambios de tamaño de la ventana
+        // Observe window resize changes
         window.addEventListener('resize', function() {{
           if (panZoomInstance) {{
             setTimeout(() => {{
@@ -2184,7 +2176,7 @@ def render_interactive_svg(dot: graphviz.Digraph, p: Dict[str, str],
         components.html(html, height=height + 16, scrolling=False)
 
 # ------------------------------------------------------------
-# Fallback Matplotlib (no usado normalmente)
+# Fallback Matplotlib (not normally used)
 # ------------------------------------------------------------
 def build_petri_figure(net, im, fm, show_ids: bool, p: Dict[str,str]):
     from random import random
@@ -2217,8 +2209,8 @@ def build_petri_figure(net, im, fm, show_ids: bool, p: Dict[str,str]):
     for n in nodes:
         x,y=pos[n]
         if n in place_names:
-            if n in im_names: show,fill,tcol = "Inicio", p["START_FILL"], p["START_TEXT"]
-            elif n in fm_names: show,fill,tcol = "Fin", p["END_FILL"], p["END_TEXT"]
+            if n in im_names: show,fill,tcol = "Start", p["START_FILL"], p["START_TEXT"]
+            elif n in fm_names: show,fill,tcol = "End", p["END_FILL"], p["END_TEXT"]
             else: show,fill,tcol = prettify_label(n), p["PLACE_FILL"], p["PLACE_TEXT"]
             txt=f"{show} ({n})" if show_ids and show!=n else show
             ax.add_patch(Circle((x,y), 0.017, facecolor=fill, edgecolor=p["BORDER"]))
@@ -2231,13 +2223,13 @@ def build_petri_figure(net, im, fm, show_ids: bool, p: Dict[str,str]):
     return fig
 
 # ------------------------------------------------------------
-# DFG con pm4py + Graphviz (vertical, estilo Celonis)
+# DFG with pm4py + Graphviz (vertical, Celonis style)
 # ------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def read_event_log(uploaded) -> Tuple[object, pd.DataFrame]:
     """
-    Lee CSV/XES/XES.GZ desde st.file_uploader y retorna (EventLog, DataFrame ordenado).
-    Requiere columnas estándar en CSV: case:concept:name, concept:name, time:timestamp
+    Reads CSV/XES/XES.GZ from st.file_uploader and returns (EventLog, sorted DataFrame).
+    Requires standard CSV columns: case:concept:name, concept:name, time:timestamp
     """
     from pm4py.objects.conversion.log import converter as log_converter
     from pm4py.util import xes_constants as xes
@@ -2249,9 +2241,9 @@ def read_event_log(uploaded) -> Tuple[object, pd.DataFrame]:
         df = pd.read_csv(uploaded)
         if "time:timestamp" in df.columns:
             df["time:timestamp"] = pd.to_datetime(df["time:timestamp"], errors="coerce")
-        # Orden básico
+        # Basic ordering
         df = df.sort_values(by=["case:concept:name", "time:timestamp"], kind="mergesort")
-        # Conversión a EventLog
+        # Conversion to EventLog
         params = {
             log_converter.Variants.TO_EVENT_LOG.value.Parameters.CASE_ID_KEY: "case:concept:name"
         }
@@ -2259,13 +2251,13 @@ def read_event_log(uploaded) -> Tuple[object, pd.DataFrame]:
         return evlog, df
 
     elif name.endswith(".xes") or name.endswith(".xes.gz"):
-        # Guardar a tmp y usar importer
+        # Save to tmp and use importer
         suffix = ".xes.gz" if name.endswith(".xes.gz") else ".xes"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(uploaded.getbuffer())
             tmp_path = tmp.name
         evlog = xes_importer.apply(tmp_path)
-        # DataFrame auxiliar (para tablas rápidas)
+        # Auxiliary DataFrame (for quick tables)
         records = []
         for trace in evlog:
             case_id = trace.attributes.get("concept:name")
@@ -2288,12 +2280,12 @@ def read_event_log(uploaded) -> Tuple[object, pd.DataFrame]:
         return evlog, df
 
     else:
-        raise ValueError("Formato no soportado. Sube CSV, XES o XES.GZ.")
+        raise ValueError("Unsupported format. Upload CSV, XES or XES.GZ.")
 
 
 def discover_dfg_with_pm4py(evlog):
     """
-    Devuelve:
+    Returns:
       - dfg: dict {(a,b): freq}
       - starts: dict {a: freq}
       - ends: dict {a: freq}
@@ -2312,7 +2304,7 @@ def discover_dfg_with_pm4py(evlog):
     n_cases = len(evlog)
     return dfg, starts, ends, act_freq, n_cases
 
-# --- Helpers de stats y orden ---
+# --- Stats and order helpers ---
 def _fmt_duration(seconds: float) -> str:
     try:
         s = float(seconds)
@@ -2328,10 +2320,10 @@ def _fmt_duration(seconds: float) -> str:
 
 def compute_activity_stats(df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
     """
-    Stats por actividad:
-      A) si hay start_timestamp -> dur = end - start
-      B) si NO hay -> dur = tiempo hasta el siguiente evento del MISMO caso
-         (aprox. sojourn/tiempo entre actividades consecutivas).
+    Stats per activity:
+      A) if there's start_timestamp -> dur = end - start
+      B) if NOT -> dur = time until next event of SAME case
+         (approx. sojourn/time between consecutive activities).
     """
     if df is None or df.empty or "concept:name" not in df.columns or "time:timestamp" not in df.columns:
         return {}
@@ -2349,7 +2341,7 @@ def compute_activity_stats(df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
             useA = useA.query("dur_s >= 0")
             use = useA[["concept:name", "dur_s"]]
 
-    # Fallback B si A no aportó nada (o si no existe start_timestamp)
+    # Fallback B if A didn't contribute (or if start_timestamp doesn't exist)
     if use.empty:
         tmp = tmp.sort_values(by=["case:concept:name", "time:timestamp"], kind="mergesort")
         tmp["next_ts"] = tmp.groupby("case:concept:name")["time:timestamp"].shift(-1)
@@ -2409,41 +2401,41 @@ def _top3_names(series: pd.Series) -> str:
 
 def build_log_stats_html_from_df(df: pd.DataFrame) -> str:
     """
-    Construye un bloque HTML con:
-      - # de casos
-      - # de actividades + Top 3 actividades
-      - # de recursos + Top 3 (si existe columna)
-      - # de roles + Top 3 (si existe columna)
-      - Rango de timestamp (min → max)
+    Builds an HTML block with:
+      - # of cases
+      - # of activities + Top 3 activities
+      - # of resources + Top 3 (if column exists)
+      - # of roles + Top 3 (if column exists)
+      - Timestamp range (min → max)
     """
     if df is None or df.empty:
-        return '<div class="small" style="margin-top:.5rem;color:var(--soft)">No hay datos para resumir.</div>'
+        return '<div class="small" style="margin-top:.5rem;color:var(--soft)">No data to summarize.</div>'
 
-    # Casos
+    # Cases
     n_cases = df["case:concept:name"].nunique() if "case:concept:name" in df.columns else 0
 
-    # Actividades
+    # Activities
     n_acts = df["concept:name"].nunique() if "concept:name" in df.columns else 0
     top_acts = _top3_names(df["concept:name"]) if "concept:name" in df.columns else ""
 
-    # Recursos (si existen)
+    # Resources (if they exist)
     has_res = ("org:resource" in df.columns) and df["org:resource"].notna().any()
     n_res = df["org:resource"].dropna().nunique() if has_res else 0
     top_res = _top3_names(df["org:resource"]) if has_res else ""
 
-    # Roles (si existen)
+    # Roles (if they exist)
     has_role = ("org:role" in df.columns) and df["org:role"].notna().any()
     n_roles = df["org:role"].dropna().nunique() if has_role else 0
     top_roles = _top3_names(df["org:role"]) if has_role else ""
 
-    # Rango de timestamp
+    # Timestamp range
     ts_min = ts_max = "-"
     if "time:timestamp" in df.columns:
         ts = pd.to_datetime(df["time:timestamp"], errors="coerce")
         if ts.notna().any():
             ts_min = ts.min()
             ts_max = ts.max()
-            # Formato compacto legible
+            # Compact readable format
             ts_min = ts_min.strftime("%Y-%m-%d %H:%M")
             ts_max = ts_max.strftime("%Y-%m-%d %H:%M")
 
@@ -2454,10 +2446,10 @@ def build_log_stats_html_from_df(df: pd.DataFrame) -> str:
     <div style="margin-top:.6rem;padding:.65rem .8rem;border:1px dashed var(--border);
                 border-radius:.7rem;background:var(--card);">
       <div style="display:flex;flex-wrap:wrap;gap:.6rem 1rem;align-items:center;">
-        <div><b>Casos:</b> {n_cases} \n </div>
-        <div><b>Rango de tiempo:</b> {ts_min} → {ts_max}</div>
-        <div><b>Actividades:</b> {n_acts} <span class="small">(top 3: {top_acts})</span></div>
-        <div><b>Recursos:</b> {n_res} <span class="small">(top 3: {top_res})</span></div>
+        <div><b>Cases:</b> {n_cases} \n </div>
+        <div><b>Time range:</b> {ts_min} → {ts_max}</div>
+        <div><b>Activities:</b> {n_acts} <span class="small">(top 3: {top_acts})</span></div>
+        <div><b>Resources:</b> {n_res} <span class="small">(top 3: {top_res})</span></div>
         {role_html}
       </div>
     </div>
@@ -2484,11 +2476,11 @@ def _attrs_to_text_md(x, level: int = 0) -> str:
 @st.cache_data(show_spinner=False)
 def get_agent3_attributes_md() -> str:
     """
-    Extrae state['agente3']['result']['atributes'] y lo devuelve como Markdown (viñetas).
-    Sin heurísticas ni claves alternativas.
+    Extracts state['agente3']['result']['atributes'] and returns as Markdown (bullets).
+    Without heuristics or alternative keys.
     """
-    a3 = get_current_agent3()             # ya tienes este helper en tu app
-    attrs = a3["attributes"]        # clave fija
+    a3 = get_current_agent3()             # you already have this helper in your app
+    attrs = a3["attributes"]        # fixed key
     return _attrs_to_text_md(attrs).strip()
 
 
@@ -2509,7 +2501,7 @@ def build_dfg_graphviz(
     dot.attr("edge", fontname="Helvetica", fontsize="10",
              color=p["EDGE_COLOR"],  fontcolor=('#0b1220' if p['MODE']=='dark' else p['SOFT']), arrowsize="0.7")
 
-    # Nodos a mostrar, respetando umbral
+    # Nodes to show, respecting threshold
     activities = set()
     for (a, b), c in dfg.items():
         if c >= min_freq:
@@ -2519,10 +2511,10 @@ def build_dfg_graphviz(
     for a, c in ends.items():
         if c >= min_freq: activities.add(a)
 
-    # Anclas
-    dot.node("_START_", "Inicio", shape="hexagon", style="filled",
+    # Anchors
+    dot.node("_START_", "Start", shape="hexagon", style="filled",
              fillcolor=p["START_FILL"], color=p["ACCENT"], fontcolor=p["START_TEXT"])
-    dot.node("_END_", "Fin", shape="hexagon", style="filled",
+    dot.node("_END_", "End", shape="hexagon", style="filled",
              fillcolor=p["END_FILL"], color=p["ACCENT"], fontcolor=p["END_TEXT"])
     dot.body.append('{rank=source; "_START_";}')
     dot.body.append('{rank=sink; "_END_";}')
@@ -2530,7 +2522,7 @@ def build_dfg_graphviz(
     act_order = act_order or {}
     def level_of(act: str) -> int:
         v = act_order.get(act, 0.5)
-        return int(max(0, min(5, round(v * 5))))  # 6 niveles (0..5)
+        return int(max(0, min(5, round(v * 5))))  # 6 levels (0..5)
 
     levels = {i: [] for i in range(6)}
     for a in activities:
@@ -2545,8 +2537,8 @@ def build_dfg_graphviz(
             return ""
         s = act_stats[a]
         return "\n" + (
-            f"prom={_fmt_duration(s['mean'])}, "
-            f"desv={_fmt_duration(s['std'])}\n"
+            f"avg={_fmt_duration(s['mean'])}, "
+            f"std={_fmt_duration(s['std'])}\n"
             f"max={_fmt_duration(s['max'])}, "
             f"min={_fmt_duration(s['min'])}"
         ) + "\n"
@@ -2575,8 +2567,8 @@ def build_dfg_graphviz(
         if a in activities and c >= min_freq:
             dot.edge(a, "_END_", label=_edge_label_text(c), penwidth=_penwidth(c))
 
-    dot.node("_START_", xlabel=f"{n_cases} casos", fontcolor=p["SOFT"])
-    dot.node("_END_",   xlabel=f"{n_cases} casos", fontcolor=p["SOFT"])
+    dot.node("_START_", xlabel=f"{n_cases} cases", fontcolor=p["SOFT"])
+    dot.node("_END_",   xlabel=f"{n_cases} cases", fontcolor=p["SOFT"])
     return dot
 
 def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
@@ -2585,7 +2577,7 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
     import hashlib
     svg_text = dot.pipe(format="svg").decode("utf-8")
     
-    # ID único para esta instancia
+    # Unique ID for this instance
     base_token = f"{instance_token}-{int(legend_collapsed)}-{p['MODE']}"
     instance_id = hashlib.md5((svg_text + base_token).encode()).hexdigest()[:8]
     
@@ -2641,13 +2633,13 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
       </style>
 
       <div id="{legend_id}" class="{'collapsed' if legend_collapsed else ''}">
-        <div class="hdr" id="{toggle_id}"><span>🛈</span><span>Leyenda</span></div>
+        <div class="hdr" id="{toggle_id}"><span>🛈</span><span>Legend</span></div>
         <div class="body">
-          <div class="row"><span class="hex" style="background:{p['START_FILL']}"></span> Inicio</div>
-          <div class="row"><span class="hex" style="background:{p['END_FILL']}"></span> Fin</div>
-          <div class="row"><span class="dot"></span> Actividad</div>
-          <div class="row">▸ Grosor = frecuencia de ruta</div>
-          <div class="row">▸ Resaltado = hover / selección ({'amarillo' if p['MODE']=='dark' else 'naranja'})</div>
+          <div class="row"><span class="hex" style="background:{p['START_FILL']}"></span> Start</div>
+          <div class="row"><span class="hex" style="background:{p['END_FILL']}"></span> End</div>
+          <div class="row"><span class="dot"></span> Activity</div>
+          <div class="row">▸ Thickness = path frequency</div>
+          <div class="row">▸ Highlight = hover / selection ({'yellow' if p['MODE']=='dark' else 'orange'})</div>
         </div>
       </div>
 
@@ -2656,7 +2648,7 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
         <button data-btn="reset">Reset</button>
         <button data-btn="zin">＋</button>
         <button data-btn="zout">－</button>
-        <button data-btn="clear">Limpiar selección</button>
+        <button data-btn="clear">Clear selection</button>
       </div>
 
       {svg_text}
@@ -2665,7 +2657,7 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
     <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
     <script>
       (function(){{
-        // Variables globales para esta instancia
+        // Global variables for this instance
         window.dfgInstances = window.dfgInstances || {{}};
         let panZoom = null;
         let resizeObserver = null;
@@ -2680,7 +2672,7 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
             return;
           }}
 
-          // Verificar si ya está inicializado
+          // Check if already initialized
           if (isInitialized) {{
             return;
           }}
@@ -2691,7 +2683,7 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
             return;
           }}
 
-          // Limpiar instancia anterior si existe
+          // Clean previous instance if exists
           if (window.dfgInstances['{instance_id}']) {{
             try {{
               window.dfgInstances['{instance_id}'].destroy();
@@ -2705,7 +2697,7 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
           svg.style.display = 'block';
           svg.style.filter = 'drop-shadow(0 12px 28px rgba(0,0,0,.35))';
 
-          // Inicializar pan-zoom
+          // Initialize pan-zoom
           panZoom = svgPanZoom(svg, {{ 
             zoomEnabled: true, 
             controlIconsEnabled: false, 
@@ -2718,7 +2710,7 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
             }}
           }});
 
-          // Guardar instancia
+          // Save instance
           window.dfgInstances['{instance_id}'] = panZoom;
           isInitialized = true;
 
@@ -2735,7 +2727,7 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
             }}
           }}
 
-          // Botones
+          // Buttons
           wrap.querySelector('[data-btn="fit"]').addEventListener('click', refit);
           wrap.querySelector('[data-btn="reset"]').addEventListener('click', () => {{
             panZoom.resetZoom();
@@ -2748,7 +2740,7 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
             wrap.classList.remove('dim-others');
           }});
 
-          // Fondo de labels y z-order
+          // Label backgrounds and z-order
           const pad = 4;
           svg.querySelectorAll('g.edge').forEach(g => g.parentNode.appendChild(g));
           svg.querySelectorAll('g.edge text').forEach(t => {{
@@ -2792,7 +2784,7 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
             }}
           }});
 
-          // Observador de cambios de tamaño
+          // Resize change observer
           if (window.ResizeObserver) {{
             resizeObserver = new ResizeObserver(() => {{
               setTimeout(refit, 50);
@@ -2800,11 +2792,11 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
             resizeObserver.observe(wrap);
           }}
 
-          // Refits iniciales
+          // Initial refits
           setTimeout(refit, 100);
           setTimeout(refit, 500);
           
-          // Manejar visibilidad de pestañas
+          // Handle tab visibility
           const handleVisibility = () => {{
             if (document.visibilityState === 'visible') {{
               setTimeout(refit, 300);
@@ -2827,9 +2819,9 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
           }};
         }}
 
-        // Inicialización diferida
+        // Delayed initialization
         function startInitialization() {{
-          // Esperar a que Streamlit renderice las pestañas
+          // Wait for Streamlit to render tabs
           setTimeout(() => {{
             const checkVisibility = setInterval(() => {{
               const wrap = document.getElementById('{wrap_id}');
@@ -2842,7 +2834,7 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
               }}
             }}, 100);
             
-            // Timeout de seguridad
+            // Safety timeout
             setTimeout(() => clearInterval(checkVisibility), 5000);
           }}, 100);
         }}
@@ -2853,7 +2845,7 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
           startInitialization();
         }}
 
-        // Leyenda toggle
+        // Legend toggle
         document.addEventListener('click', function(e) {{
           if (e.target.id === '{toggle_id}' || e.target.closest('#{toggle_id}')) {{
             const legend = document.getElementById('{legend_id}');
@@ -2872,14 +2864,14 @@ def render_interactive_svg_dfg(dot: graphviz.Digraph, p: Dict[str, str],
 
 
 def quick_text_similarity(text1, text2):
-    """Similitud rápida entre dos textos usando SequenceMatcher"""
+    """Quick similarity between two texts using SequenceMatcher"""
     if not text1 or not text2:
         return 0.0
     
-    # Limpieza básica para mejor matching
+    # Basic cleaning for better matching
     def clean_text(text):
         text = str(text).lower()
-        # Remover puntuación y espacios extra
+        # Remove punctuation and extra spaces
         text = re.sub(r'[^\w\s]', ' ', text)
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
@@ -2894,8 +2886,8 @@ def quick_text_similarity(text1, text2):
 
 def fast_semantic_matching(agent8_problem, agent4_problems):
     """
-    Matching rápido que usa similitud de texto directa.
-    Optimizado para velocidad.
+    Fast matching that uses direct text similarity.
+    Optimized for speed.
     """
     if not agent8_problem or not agent4_problems:
         return None, 0.0
@@ -2904,13 +2896,13 @@ def fast_semantic_matching(agent8_problem, agent4_problems):
     best_score = 0.0
     
     for problem in agent4_problems:
-        # Calcular similitud con la justificación (más detallada)
+        # Calculate similarity with justification (more detailed)
         justification_sim = quick_text_similarity(agent8_problem, problem.get('justification', ''))
         
-        # Calcular similitud con la descripción (más concisa)
+        # Calculate similarity with description (more concise)
         description_sim = quick_text_similarity(agent8_problem, problem.get('description', ''))
         
-        # Usar la mayor similitud
+        # Use the highest similarity
         current_score = max(justification_sim, description_sim)
         
         if current_score > best_score:
@@ -2922,14 +2914,14 @@ def fast_semantic_matching(agent8_problem, agent4_problems):
 
 def match_problems_with_solutions():
     """
-    Matching mejorado entre problemas del agente4 y soluciones del agente8.
+    Improved matching between agent4 problems and agent8 solutions.
     """
     agent4_data = get_current_agent4()
     agent8_items = get_current_agent8()
     
     matched_pairs = []
     
-    # Extraer problemas del agente4
+    # Extract problems from agent4
     agent4_problems = []
     if 'conformance_issues' in agent4_data and 'issues' in agent4_data['conformance_issues']:
         for issue in agent4_data['conformance_issues']['issues']:
@@ -2942,34 +2934,34 @@ def match_problems_with_solutions():
             }
             agent4_problems.append(problem_data)
     
-    # Para debugging
-    st.sidebar.write(f"🔍 Encontrados {len(agent4_problems)} problemas en agente4")
-    st.sidebar.write(f"🔍 Encontrados {len(agent8_items)} problemas en agente8")
+    # For debugging
+    st.sidebar.write(f"🔍 Found {len(agent4_problems)} problems in agent4")
+    st.sidebar.write(f"🔍 Found {len(agent8_items)} problems in agent8")
     
-    # Estrategia de matching mejorada
+    # Improved matching strategy
     for i, agent8_item in enumerate(agent8_items):
-        problema = agent8_item.get("problem_description") or agent8_item.get("problem_descripcion", "")
-        solucion = agent8_item.get("recommendation", "")
+        problem = agent8_item.get("problem_description") or agent8_item.get("problem_descripcion", "")
+        solution = agent8_item.get("recommendation", "")
         
-        if problema and solucion:
-            # Primero intentar matching por índice si hay la misma cantidad
+        if problem and solution:
+            # First try index matching if same quantity
             matching_problem = None
             problem_justification = ""
             
             if i < len(agent4_problems):
-                # Matching directo por índice
+                # Direct index matching
                 matching_problem = agent4_problems[i]
                 problem_justification = matching_problem.get('justification', '')
-                st.sidebar.write(f"✅ Match por índice: Problema {i+1}")
+                st.sidebar.write(f"✅ Match by index: Problem {i+1}")
             else:
-                # Buscar el mejor match por similitud
+                # Find best match by similarity
                 best_score = 0
                 best_match = None
                 
                 for agent4_problem in agent4_problems:
-                    # Calcular similitud con descripción y justificación
-                    desc_sim = quick_text_similarity(problema, agent4_problem.get('description', ''))
-                    just_sim = quick_text_similarity(problema, agent4_problem.get('justification', ''))
+                    # Calculate similarity with description and justification
+                    desc_sim = quick_text_similarity(problem, agent4_problem.get('description', ''))
+                    just_sim = quick_text_similarity(problem, agent4_problem.get('justification', ''))
                     current_score = max(desc_sim, just_sim)
                     
                     if current_score > best_score and current_score > 0.3:
@@ -2979,14 +2971,14 @@ def match_problems_with_solutions():
                 if best_match:
                     matching_problem = best_match
                     problem_justification = best_match.get('justification', '')
-                    st.sidebar.write(f"✅ Match por similitud ({best_score:.2f}): Problema {i+1}")
+                    st.sidebar.write(f"✅ Match by similarity ({best_score:.2f}): Problem {i+1}")
                 else:
-                    st.sidebar.write(f"❌ No match: Problema {i+1}")
+                    st.sidebar.write(f"❌ No match: Problem {i+1}")
             
             matched_pairs.append({
-                "Problema": str(problema).strip(),
-                "Solución": str(solucion).strip(),
-                "_justificacion": problem_justification  # Campo oculto
+                "Problem": str(problem).strip(),
+                "Solution": str(solution).strip(),
+                "_justification": problem_justification  # Hidden field
             })
     
     return matched_pairs
@@ -2994,7 +2986,7 @@ def match_problems_with_solutions():
 
 def get_agent8_problem_pairs() -> List[Dict[str, str]]:
     """
-    Mapea problemas con soluciones INCLUYENDO la justificación oculta.
+    Maps problems with solutions INCLUDING hidden justification.
     """
     return match_problems_with_solutions()
 
@@ -3004,12 +2996,12 @@ def get_agent8_problem_pairs() -> List[Dict[str, str]]:
 # ------------------------------------------------------------
 with st.sidebar:
     default_dark = st.session_state.get("theme", "dark") == "dark"
-    dark_on = st.toggle("🌙 Modo oscuro", value=default_dark)
+    dark_on = st.toggle("🌙 Dark mode", value=default_dark)
     st.session_state["theme"] = "dark" if dark_on else "light"
 
-    # === SELECTOR DE DOMINIO ===
+    # === DOMAIN SELECTOR ===
     st.markdown("---")
-    st.markdown("### 🏷️ Dominio del Proceso")
+    st.markdown("### 🏷️ Process Domain")
 
     domain_options = ["Manufacturing", "Banking", "IT Support"]
 
@@ -3017,7 +3009,7 @@ with st.sidebar:
         st.session_state.selected_domain = domain_options[0]
     
     selected_domain = st.selectbox(
-        "Selecciona el dominio de tu proceso:",
+        "Select your process domain:",
         options=domain_options,
         index=domain_options.index(st.session_state.selected_domain),
         label_visibility="collapsed"
@@ -3027,45 +3019,45 @@ with st.sidebar:
         st.session_state.selected_domain = selected_domain
         st.rerun()
     
-    st.markdown(f"**Dominio actual:** `{st.session_state.selected_domain}`")
+    st.markdown(f"**Current domain:** `{st.session_state.selected_domain}`")
     
    
-    # === OPCIONES AVANZADAS ===
-    with st.expander("⚙️ Opciones avanzadas", expanded=False):
-        # ✅ NUEVO: Checkbox para State previsualizado
+    # === ADVANCED OPTIONS ===
+    with st.expander("⚙️ Advanced options", expanded=False):
+        # ✅ NEW: Checkbox for Preprocessed State
         use_preprocessed_state = st.checkbox(
-            "State previsualizado", 
+            "Preprocessed state", 
             value=True,
-            help="Usa un state preprocesado para acelerar el procesamiento. Solo disponible para dominios predefinidos."
+            help="Use a preprocessed state to speed up processing. Only available for predefined domains."
         )
         
         upsert_qdrant = st.checkbox(
-            "📊 Indexar en Qdrant (recomendado)", 
+            "📊 Index to Qdrant (recommended)", 
             value=True,
-            help="Almacena resultados para búsquedas semánticas y gestión de sesiones. Los datos expiran automáticamente."
+            help="Store results for semantic searches and session management. Data expires automatically."
         )
         
         ttl_hours = st.slider(
-            "⏰ Tiempo de vida de datos (horas)",
+            "⏰ Data lifetime (hours)",
             min_value=1,
             max_value=24,
             value=3,
-            help="Los datos se eliminarán automáticamente después de este tiempo"
+            help="Data will be automatically deleted after this time"
         )
         ttl_seconds = ttl_hours * 3600
 
     
     st.markdown("---")
 
-    st.markdown("### 📤 Subir Archivo de Proceso")
-    uploaded = st.file_uploader("Sube tu event log", type=["csv","xes","xes.gz"], label_visibility="collapsed")
+    st.markdown("### 📤 Upload Process File")
+    uploaded = st.file_uploader("Upload your event log", type=["csv","xes","xes.gz"], label_visibility="collapsed")
     
-    # Botón de procesamiento - MANTENER
+    # Processing button - KEEP
     if uploaded is not None:
         col1, col2 = st.columns([1, 1])
         with col1:
-            if st.button("🚀 Procesar", use_container_width=True):
-                success = procesar_archivo_backend(
+            if st.button("🚀 Process", use_container_width=True):
+                success = process_file_backend(
                     uploaded,
                     st.session_state.selected_domain,
                     upsert_qdrant=upsert_qdrant,
@@ -3075,7 +3067,7 @@ with st.sidebar:
                 if success:
                     st.rerun()
         with col2:
-            if st.button("🔄 Limpiar", use_container_width=True):
+            if st.button("🔄 Clear", use_container_width=True):
                 if 'state_file_path' in st.session_state:
                     try: os.remove(st.session_state['state_file_path'])
                     except: pass
@@ -3085,27 +3077,27 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Estado actual - SIMPLIFICADO
+    # Current state - SIMPLIFIED
     if 'state_file_path' in st.session_state:
-        st.success("✅ Estado: Procesado")
+        st.success("✅ Status: Processed")
     else:
-        st.info("⏳ Estado: Esperando archivo")
+        st.info("⏳ Status: Waiting for file")
     
     st.caption(f"⏱️ {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
 
 # ------------------------------------------------------------
-# Aplicar paleta elegida
+# Apply chosen palette
 # ------------------------------------------------------------
 PALETTE = get_palette(st.session_state.get("theme", "dark"))
 inject_css(PALETTE)
 
 
 
-# Reemplaza el script actual por este (después de inject_css())
+# Replace current script with this (after inject_css())
 st.markdown("""
 <script>
-// Sistema de gestión universal para componentes SVG
+// Universal management system for SVG components
 window.svgGlobalManager = {
     components: new Map(),
     
@@ -3118,7 +3110,7 @@ window.svgGlobalManager = {
     },
     
     refreshAll: function() {
-        console.log('Refrescando todos los componentes SVG...');
+        console.log('Refreshing all SVG components...');
         this.components.forEach((data, id) => {
             const element = document.getElementById(id);
             if (element) {
@@ -3143,7 +3135,7 @@ window.svgGlobalManager = {
     
     cleanup: function() {
         const now = Date.now();
-        const MAX_AGE = 120000; // 2 minutos
+        const MAX_AGE = 120000; // 2 minutes
         
         this.components.forEach((data, id) => {
             if (now - data.lastActive > MAX_AGE) {
@@ -3163,12 +3155,12 @@ window.svgGlobalManager = {
     }
 };
 
-// Ejecutar limpieza periódica
+// Run periodic cleanup
 setInterval(() => {
     window.svgGlobalManager.cleanup();
 }, 30000);
 
-// Observar cambios de pestañas para reinicialización automática
+// Observe tab changes for automatic reinitialization
 const tabObserver = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
         if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
@@ -3182,7 +3174,7 @@ const tabObserver = new MutationObserver((mutations) => {
     });
 });
 
-// Iniciar observación cuando el DOM esté listo
+// Start observation when DOM is ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
         const tabs = document.querySelectorAll('.stTab');
@@ -3223,10 +3215,10 @@ st.markdown(f"""
 
 <div class="minimal-hero">
     <div class="minimal-title">
-        🚀 Analizador de Procesos Inteligente
+        🚀 Intelligent Process Analyzer
     </div>
     <div class="minimal-sub">
-        Descubre insights, optimiza flujos y mejora continuamente
+        Discover insights, optimize flows and continuously improve
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -3235,38 +3227,38 @@ st.markdown(f"""
 
 
 # ------------------------------------------------------------
-# Resumen del event log (solo se muestra cuando hay archivo subido)
+# Event log summary (only shown when file is uploaded)
 # ------------------------------------------------------------
 if is_backend_ready():
-    # Leemos el log para construir highlights desde el DF (cacheado)
+    # Read log to build highlights from DF (cached)
     try:
         _evlog_preview, _df_preview = read_event_log(uploaded)
     except Exception as e:
         _evlog_preview, _df_preview = None, None
-        st.warning(f"No se pudo preparar el resumen desde el DF: {e}")
+        st.warning(f"Could not prepare summary from DF: {e}")
 
     with st.container():
         summaries = get_log_summaries_strict()
-        # Bloque base: si hay resumen de agente, lo mostramos
+        # Base block: if there's agent summary, we show it
         if summaries:
             src, html_txt = summaries[0]
-            # Añadimos highlights del DF al final del resumen
+            # Add DF highlights to end of summary
             stats_html = build_log_stats_html_from_df(_df_preview)
             st.markdown(
-                f'<div class="block"><b>Resumen del event log:</b><br>{html_txt}{stats_html}</div>',
+                f'<div class="block"><b>Event log summary:</b><br>{html_txt}{stats_html}</div>',
                 unsafe_allow_html=True
             )
         else:
-            # Sin resumen de agente: mostramos sólo los highlights del DF
+            # No agent summary: show only DF highlights
             stats_html = build_log_stats_html_from_df(_df_preview)
             st.markdown(
-                f'<div class="block"><b>Resumen del event log:</b><br>{stats_html}</div>',
+                f'<div class="block"><b>Event log summary:</b><br>{stats_html}</div>',
                 unsafe_allow_html=True
             )
     st.markdown("")
 else:
     st.markdown(
-        '<div class="block dashed">⏳ <b>Resumen del event log:</b><br>Sube un archivo CSV o XES para ver el resumen del log.</div>',
+        '<div class="block dashed">⏳ <b>Event log summary:</b><br>Upload a CSV or XES file to see the log summary.</div>',
         unsafe_allow_html=True
     )
     st.markdown("")
@@ -3278,7 +3270,7 @@ else:
 st.markdown("")
 
 if not is_backend_ready():
-    # === Sólo mostrar Chat hasta que se suba el CSV/XES ===
+    # === Only show Chat until CSV/XES is uploaded ===
     (chat_tab,) = st.tabs(["Chat"])
 
     with chat_tab:
@@ -3286,10 +3278,10 @@ if not is_backend_ready():
         
         
         st.markdown(
-            '<div class="block" style="margin-bottom: 3rem;">Este chat guardará la información del proceso en una memoria compartida entre agentes, '
-            'para usarla como <b>contexto global</b> del análisis.'
-            '<br><b>Para comenzar, sube tu archivo CSV o XES.</b> Al cargarlo, se habilitarán las demás pestañas y '
-            'podré responder usando ese contexto.</div>',
+            '<div class="block" style="margin-bottom: 3rem;">This chat will save process information in a shared memory between agents, '
+            'to use as <b>global context</b> for analysis.'
+            '<br><b>To begin, upload your CSV or XES file.</b> When loaded, the other tabs will be enabled and '
+            'I can respond using that context.</div>',
             unsafe_allow_html=True
         )
         if "msgs" not in st.session_state:
@@ -3297,53 +3289,53 @@ if not is_backend_ready():
         for role, text in st.session_state.msgs:
             with st.chat_message(role):
                 st.write(text)
-        prompt = st.chat_input("Escribe aquí (demo, sin backend)")
+        prompt = st.chat_input("Write here (demo, no backend)")
         if prompt:
             st.session_state.msgs.append(("user", prompt))
-            st.session_state.msgs.append(("assistant", "Antes de continuar: por favor sube tu CSV o XES para cargar el contexto del proceso."))
+            st.session_state.msgs.append(("assistant", "Before continuing: please upload your CSV or XES to load the process context."))
             st.rerun()
 
     st.markdown("")
-    st.caption("Cuando subas un archivo se desbloquearán las demás pestañas con visualizaciones y métricas.")
+    st.caption("When you upload a file the other tabs with visualizations and metrics will be unlocked.")
 
 else:
-    # === Desbloquear TODAS las pestañas cuando hay archivo ===
-    tabs = st.tabs(["Petri net + BPMN", "DFG + Atributos", "Reporte de problemas y recomendaciones", "Chat"])
+    # === Unlock ALL tabs when there's a file ===
+    tabs = st.tabs(["Petri net + BPMN", "DFG + Attributes", "Problem and recommendation report", "Chat"])
 
     # ============================================================
     # TAB: Petri net
     # ============================================================
     with tabs[0]:
-        # --- Estado para refresco Petri (si no existe) ---
+        # --- State for Petri refresh (if it doesn't exist) ---
         if 'petri_refresh_counter' not in st.session_state:
             st.session_state.petri_refresh_counter = 0
         if 'petri_show_ids' not in st.session_state:
             st.session_state.petri_show_ids = False
 
-        # --- Header con botón de refresco alineado a la derecha ---
+        # --- Header with refresh button aligned to the right ---
         h1, h2 = st.columns([0.92, 0.08])
         with h1:
             st.markdown("### Petri net")
         with h2:
             if st.button("🔄", key=f"petri_refresh_top_{st.session_state.petri_refresh_counter}",
-                        help="Refrescar Petri net", use_container_width=True):
+                        help="Refresh Petri net", use_container_width=True):
                 st.session_state.petri_refresh_counter += 1
                 st.rerun()
 
-        # (resto de tu lógica tal cual)
+        # (rest of your logic as is)
         best_model = get_current_best_model()
         model_name = best_model.get("name","Unnamed model")
         model_type = detect_model_type(model_name)
-        st.markdown(f"<b>Modelo descubierto:</b> {model_type.capitalize()} miner", unsafe_allow_html=True)
+        st.markdown(f"<b>Discovered model:</b> {model_type.capitalize()} miner", unsafe_allow_html=True)
         st.write("")
 
         net = best_model.get("net"); im = best_model.get("im"); fm = best_model.get("fm")
 
-        # --- Controles (SIN el botón 🔄 aquí) ---
+        # --- Controls (WITHOUT 🔄 button here) ---
         col1, col2, col3 = st.columns([3, 1, 1])
         with col1:
             show_ids = st.toggle(
-                "Mostrar ID técnico junto al nombre",
+                "Show technical ID next to name",
                 value=st.session_state.petri_show_ids,
                 key=f"petri_toggle_main_{st.session_state.petri_refresh_counter}"
             )
@@ -3361,34 +3353,34 @@ else:
                     legend_collapsed=True, instance_token=instance_token
                 )
             except Exception as e:
-                st.error(f"No fue posible visualizar la red de Petri: {e}")
+                st.error(f"Could not visualize Petri net: {e}")
         else:
-            st.warning("No se encontró la red de Petri en el modelo cargado.")
+            st.warning("Petri net not found in loaded model.")
 
 
     
         st.write("")
 
-        # ======== MÉTRICAS ========
+        # ======== METRICS ========
         raw_metrics = extract_conformance_metrics(best_model)
         metrics = normalize_metrics_for_display(raw_metrics)
 
         st.markdown("""
         <div class="metrics-head">
-        <div class="title">Métricas de conformance checking</div>
+        <div class="title">Conformance checking metrics</div>
         <div class="spacer"></div>
         <div class="help-badge">?
             <div class="tip">
-            <p><b>Definiciones:</b></p>
+            <p><b>Definitions:</b></p>
             <ul>
-                <li><b>Precisión</b>: mide cuánto <i>comportamiento extra</i> permite el modelo respecto al log. <code>1: nada extra</code></li>
-                <li><b>Fitness (registro)</b>: ajuste global al log (token replay a nivel de registro). <code>1: encaja perfecto</code></li>
-                <li><b>Fitness (promedio traza)</b>: ajuste promedio por caso/traza. <code>1: encaja perfecto</code></li>
-                <li><b>Generalización</b>: capacidad de explicar variantes válidas sin sobreajuste. <code>mayor es mejor</code></li>
-                <li><b>Simplicidad</b>: preferencia por modelos más pequeños/claros. <code>mayor es mejor</code></li>
-                <li><b>Trazas conformes (0–1)</b>: fracción de casos que cumplen totalmente el modelo (antes en %, aquí normalizado).</li>
+                <li><b>Precision</b>: measures how much <i>extra behavior</i> the model allows compared to the log. <code>1: nothing extra</code></li>
+                <li><b>Fitness (log)</b>: global fit to log (token replay at log level). <code>1: perfect fit</code></li>
+                <li><b>Fitness (average trace)</b>: average fit per case/trace. <code>1: perfect fit</code></li>
+                <li><b>Generalization</b>: ability to explain valid variants without overfitting. <code>higher is better</code></li>
+                <li><b>Simplicity</b>: preference for smaller/clearer models. <code>higher is better</code></li>
+                <li><b>Conforming traces (0–1)</b>: fraction of cases that fully comply with model (previously in %, here normalized).</li>
             </ul>
-            <p class="small">Cálculo (PM4Py): <code>token_replay</code>, <code>precision.ETCONFORMANCE_TOKEN</code>, <code>generalization</code>, <code>simplicity</code>.</p>
+            <p class="small">Calculation (PM4Py): <code>token_replay</code>, <code>precision.ETCONFORMANCE_TOKEN</code>, <code>generalization</code>, <code>simplicity</code>.</p>
             </div>
         </div>
         </div>
@@ -3413,12 +3405,12 @@ else:
             st.write("")
 
         desired = [
-            "Precisión",
-            "Fitness (registro)",
-            "Fitness (promedio traza)",
-            "Generalización",
-            "Simplicidad",
-            "Trazas conformes (0-1)",
+            "Precision",
+            "Fitness (log)",
+            "Fitness (average trace)",
+            "Generalization",
+            "Simplicity",
+            "Conforming traces (0-1)",
         ]
         present = [k for k in desired if k in metrics]
 
@@ -3433,21 +3425,21 @@ else:
                 with row2[i]:
                     render_metric_card(name, metrics[name])
         else:
-            st.markdown('<div class="dashed">No se encontraron métricas de conformance en el modelo.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="dashed">No conformance metrics found in model.</div>', unsafe_allow_html=True)
 
         st.write("")
 
-        # -------- ¿Por qué se eligió este modelo? (con ayuda de fórmula) --------
+        # -------- Why was this model chosen? (with formula help) --------
         st.markdown("""
         <div class="metrics-head">
-        <div class="title">¿Por qué se eligió este modelo?</div>
+        <div class="title">Why was this model chosen?</div>
         <div class="spacer"></div>
         <div class="help-badge">?
             <div class="tip">
-            <p><b>Regla de decisión (S):</b></p>
+            <p><b>Decision rule (S):</b></p>
             <ul>
                 <li><code>S = 0.5*(Fitness + Precision) + 0.3*Generalization + 0.2*Simplicity</code></li>
-                <li>Penalización por underfitting/permisividad: si <code>(Fitness - Precision) &gt; 0.30</code>, restar <code>0.15*((Fitness - Precision) - 0.30)</code></li>
+                <li>Penalty for underfitting/permissiveness: if <code>(Fitness - Precision) &gt; 0.30</code>, subtract <code>0.15*((Fitness - Precision) - 0.30)</code></li>
             </ul>
             </div>
         </div>
@@ -3470,33 +3462,33 @@ else:
             if summary_fmt:
                 st.markdown(summary_fmt, unsafe_allow_html=True)
             else:
-                st.markdown("_(No hay resumen disponible en el state)_", unsafe_allow_html=True)
+                st.markdown("_(No summary available in state)_", unsafe_allow_html=True)
      
     with tabs[1]:
-        import plotly.graph_objects as go  # por si no estaba importado arriba
+        import plotly.graph_objects as go  # in case it wasn't imported above
 
-        # --- Fallback para evitar KeyError ---
+        # --- Fallback to avoid KeyError ---
         if 'global_refresh_counter' not in st.session_state:
             st.session_state.global_refresh_counter = 0
 
-        # --- Estado unificado para refresco DFG + Gráfico ---
+        # --- Unified state for DFG + Chart refresh ---
         st.session_state.setdefault('dfg_local_refresh', 0)
         st.session_state.setdefault('dfg_min_freq', 1)
         st.session_state.setdefault('dfg_show_stats', False)
 
-        # --- Header con UN solo botón de refresco ---
+        # --- Header with ONE refresh button ---
         h1, h2 = st.columns([0.92, 0.08])
         with h1:
             st.markdown("### DFG")
         with h2:
             if st.button("🔄", key=f"dfg_refresh_top_{st.session_state.dfg_local_refresh}",
-                        help="Refrescar DFG y gráficos del panel", use_container_width=True):
+                        help="Refresh DFG and panel charts", use_container_width=True):
                 st.session_state.dfg_local_refresh += 1
                 st.rerun()
 
         st.write("")
 
-        # Archivo subido
+        # Uploaded file
         _uploaded = globals().get("uploaded", st.session_state.get("uploaded", None))
 
         # ============================== DFG (Graphviz) ==============================
@@ -3506,10 +3498,10 @@ else:
 
             max_f = max(list(dfg.values()) + list(starts.values()) + list(ends.values()) + [1])
             new_min_freq = st.slider(
-                "Frecuencia mínima de arista",
+                "Minimum edge frequency",
                 1, int(max_f),
                 value=st.session_state.dfg_min_freq,
-                help="Filtra rutas poco frecuentes y reduce cruces",
+                help="Filters infrequent paths and reduces crossings",
                 key=f"dfg_min_freq_{st.session_state.global_refresh_counter}"
             )
             if new_min_freq != st.session_state.dfg_min_freq:
@@ -3518,7 +3510,7 @@ else:
                 st.rerun()
 
             new_show_stats = st.toggle(
-                "Mostrar estadísticas por actividad (prom, desv, max, min)",
+                "Show statistics per activity (avg, std, max, min)",
                 value=st.session_state.dfg_show_stats,
                 key=f"dfg_show_stats_{st.session_state.global_refresh_counter}"
             )
@@ -3550,26 +3542,26 @@ else:
                 instance_token=token
             )
         except Exception as e:
-            st.error(f"No fue posible construir el DFG: {e}")
+            st.error(f"Could not build DFG: {e}")
             df_log = None
 
 
-        st.markdown("##### 📈 Tendencia Temporal")
+        st.markdown("##### 📈 Temporal Trend")
 
         try:
                 if df_log is not None and 'time:timestamp' in df_log.columns:
                     
                     st.markdown('<div class="no-pill-radio">', unsafe_allow_html=True)
                     view_type = st.radio(
-                        "Seleccionar vista:",
-                        ("Mensual", "Semestral: Ene-Jun", "Semestral: Jul-Dic"),
+                        "Select view:",
+                        ("Monthly", "Semester: Jan-Jun", "Semester: Jul-Dec"),
                         horizontal=True,
                         key=f"trend_view_{st.session_state.dfg_local_refresh}",
                     )
-                    st.markdown('</div></div>', unsafe_allow_html=True)  # cierra radio y caja
+                    st.markdown('</div></div>', unsafe_allow_html=True)  # close radio and box
 
-                    # Vista mensual
-                    if view_type == "Mensual":
+                    # Monthly view
+                    if view_type == "Monthly":
                         available_months = get_available_months(df_log)
                         month_display_names = get_month_display_names(available_months)
 
@@ -3579,15 +3571,15 @@ else:
                                 c1, c2 = st.columns([1, 1])
                                 with c1:
                                     selected_month_display = st.selectbox(
-                                        "Seleccionar Mes:",
+                                        "Select Month:",
                                         options=month_display_names,
                                         index=0,
                                         key=f"month_selector_{st.session_state.dfg_local_refresh}",
-                                        help="Tendencia diaria del mes seleccionado"
+                                        help="Daily trend of selected month"
                                     )
                                 with c2:
                                     show_monthly_summary = st.toggle(
-                                        "Mostrar resumen mensual",
+                                        "Show monthly summary",
                                         value=True,
                                         key=f"show_monthly_summary_{st.session_state.dfg_local_refresh}"
                                     )
@@ -3610,33 +3602,33 @@ else:
                                 key=f"monthly_trend_chart_{st.session_state.dfg_local_refresh}"
                             )
                         else:
-                            st.warning("No se encontraron meses con timestamps válidos")
+                            st.warning("No months with valid timestamps found")
 
-                    # Vista semestral
+                    # Semester view
                     else:
-                        semester = "Enero-Junio" if "Ene-Jun" in view_type else "Julio-Diciembre"
+                        semester = "January-June" if "Jan-Jun" in view_type else "July-December"
                         available_years = get_available_years(df_log)
 
                         if available_years:
                             c1, c2 = st.columns([1, 1])
                             with c1:
                                 selected_year = st.selectbox(
-                                    "Seleccionar Año:",
+                                    "Select Year:",
                                     options=available_years,
                                     index=0,
                                     key=f"year_selector_{st.session_state.dfg_local_refresh}",
-                                    help="Análisis semestral por año"
+                                    help="Semester analysis by year"
                                 )
                             with c2:
                                 show_semester_summary = st.toggle(
-                                    "Mostrar resumen semestral",
+                                    "Show semester summary",
                                     value=True,
                                     key=f"show_semester_summary_{st.session_state.dfg_local_refresh}"
                                 )
                         else:
                             selected_year = datetime.now().year
                             show_semester_summary = True
-                            st.info("No se encontraron años específicos; usando el año actual")
+                            st.info("No specific years found; using current year")
 
                         semester_fig = create_semester_trend_chart(
                             df_log, PALETTE, semester, selected_year, show_summary=show_semester_summary
@@ -3654,28 +3646,28 @@ else:
                             key=f"semester_trend_chart_{st.session_state.dfg_local_refresh}"
                         )
                 else:
-                    st.warning("No hay datos disponibles para la tendencia temporal")
+                    st.warning("No data available for temporal trend")
         except Exception as e:
-                st.error(f"Error al generar la tendencia temporal: {str(e)}")
+                st.error(f"Error generating temporal trend: {str(e)}")
      
-        st.markdown("#### Panel: Actividades, Recursos/roles y Atributos")
+        st.markdown("#### Panel: Activities, Resources/roles and Attributes")
         left_col, right_col = st.columns([0.52, 0.48], gap="large")
 
-        # ----------------------------- IZQUIERDA: Frecuencia de Actividades ----------------
+        # ----------------------------- LEFT: Activity Frequency ----------------
         with left_col:
-            st.markdown("##### 📊 Frecuencia de Actividades")
+            st.markdown("##### 📊 Activity Frequency")
 
             c1, c2 = st.columns([1, 1])
             with c1:
                 chart_top_n = st.selectbox(
-                    "Actividades a mostrar",
+                    "Activities to show",
                     options=[5, 8, 15, 20],
                     index=1,
                     key=f"chart_top_n_{st.session_state.dfg_local_refresh}",
                 )
             with c2:
                 chart_show_all = st.checkbox(
-                    "Mostrar todas las actividades",
+                    "Show all activities",
                     value=False,
                     key=f"chart_show_all_{st.session_state.dfg_local_refresh}"
                 )
@@ -3686,9 +3678,9 @@ else:
                     CASE_COL = 'case:concept:name'
 
                     if ACTIVITY_COL not in df_log.columns or CASE_COL not in df_log.columns:
-                        st.warning("El log no contiene las columnas requeridas 'concept:name' y 'case:concept:name'.")
+                        st.warning("Log does not contain required columns 'concept:name' and 'case:concept:name'.")
                     else:
-                        # Casos únicos por actividad
+                        # Unique cases per activity
                         case_freq = (
                             df_log.groupby(ACTIVITY_COL)[CASE_COL]
                             .nunique()
@@ -3696,7 +3688,7 @@ else:
                             .rename(columns={ACTIVITY_COL: 'Activity'})
                         )
 
-                        # Eventos por actividad
+                        # Events per activity
                         event_freq = (
                             df_log[ACTIVITY_COL]
                             .value_counts()
@@ -3704,7 +3696,7 @@ else:
                         )
                         event_freq.columns = ['Activity', 'Number of events']
 
-                        # Merge y limpieza
+                        # Merge and clean
                         chart_df = (
                             pd.merge(case_freq, event_freq, on='Activity', how='outer')
                             .fillna(0)
@@ -3712,7 +3704,7 @@ else:
                         chart_df['Number of cases'] = chart_df['Number of cases'].astype(int)
                         chart_df['Number of events'] = chart_df['Number of events'].astype(int)
 
-                        # Orden y recorte
+                        # Order and trim
                         chart_df = chart_df.sort_values('Number of cases', ascending=False)
                         if not chart_show_all and chart_top_n > 0:
                             chart_df = chart_df.head(chart_top_n)
@@ -3721,7 +3713,7 @@ else:
                         total_cases = df_log[CASE_COL].nunique()
                         total_events = len(df_log)
 
-                        # Cabecera compacta
+                        # Compact header
                         st.markdown(f"""
                         <div style="border: 1px solid {PALETTE['BORDER']}; border-radius: 12px; padding: 0px; 
                                     background: {PALETTE['SURFACE']}; margin-bottom: 8px; overflow: hidden;">
@@ -3729,17 +3721,17 @@ else:
                                         padding: 10px 12px; border-bottom: 1px solid {PALETTE['BORDER']};
                                         display:flex; align-items:center; gap:8px;">
                                 <span style="font-weight:700; color:{PALETTE['TEXT']}; font-size:13px;">
-                                    Frecuencia de Actividades
+                                    Activity Frequency
                                 </span>
                                 <span style="flex:1;"></span>
                                 <span style="color:{PALETTE['SOFT']}; font-size:12px;">
-                                    {total_cases:,.0f} casos • {total_events:,.0f} eventos
+                                    {total_cases:,.0f} cases • {total_events:,.0f} events
                                 </span>
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
 
-                        # Gráfico
+                        # Chart
                         fig = go.Figure()
                         fig.add_trace(go.Bar(
                             y=chart_df['Activity'],
@@ -3751,8 +3743,8 @@ else:
                             ),
                             hovertemplate=(
                                 "<b>%{y}</b><br>"
-                                "Casos con esta actividad: %{x:,.0f}<br>"
-                                "Total de eventos: %{customdata:,.0f}<br>"
+                                "Cases with this activity: %{x:,.0f}<br>"
+                                "Total events: %{customdata:,.0f}<br>"
                                 "<extra></extra>"
                             ),
                             customdata=chart_df['Number of events'],
@@ -3766,7 +3758,7 @@ else:
                             margin=dict(l=10, r=10, t=12, b=10),
                             showlegend=False,
                             xaxis=dict(
-                                title='Casos que contienen esta actividad',
+                                title='Cases containing this activity',
                                 gridcolor=PALETTE['BORDER'],
                                 gridwidth=1,
                                 showline=True,
@@ -3798,8 +3790,8 @@ else:
                             key=f"activity_chart_main_{st.session_state.dfg_local_refresh}"
                         )
 
-                        # ---------------- Heatmap Actividad × Recurso ----------------
-                        st.markdown("##### 🔥 Heatmap Actividad × Recurso")
+                        # ---------------- Activity × Resource Heatmap ----------------
+                        st.markdown("##### 🔥 Activity × Resource Heatmap")
 
                         try:
                             if (
@@ -3811,32 +3803,32 @@ else:
                                 RESOURCE_COL = 'org:resource'
                                 CASE_COL = 'case:concept:name'
 
-                                # ---------------- Controles ----------------
+                                # ---------------- Controls ----------------
                                 c1, c2, c3 = st.columns([1, 1, 1])
                                 with c1:
                                     hm_metric = st.selectbox(
-                                        "Métrica",
-                                        options=["Eventos", "Casos"],
+                                        "Metric",
+                                        options=["Events", "Cases"],
                                         index=0,
                                         key=f"hm_metric_{st.session_state.dfg_local_refresh}"
                                     )
                                 with c2:
                                     hm_scale = st.selectbox(
-                                        "Escala",
-                                        options=["Conteos", "% por recurso"],   # << antes era "por actividad"
+                                        "Scale",
+                                        options=["Counts", "% by resource"],   # << before was "per activity"
                                     
-                                        index=1,                        # por defecto: % por recurso (tu pedido)
+                                        index=1,                        # default: % by resource (your request)
                                         key=f"hm_scale_{st.session_state.dfg_local_refresh}"
                                     )
                                 with c3:
                                     hm_show_zeros = st.checkbox(
-                                        "Etiquetar ceros",
+                                        "Label zeros",
                                         value=False,
                                         key=f"hm_showzeros_{st.session_state.dfg_local_refresh}"
                                     )
 
-                                # --- Tabla base (igual que antes) ---
-                                if hm_metric == "Eventos":
+                                # --- Base table (same as before) ---
+                                if hm_metric == "Events":
                                     base = df_log.groupby([RESOURCE_COL, ACTIVITY_COL]).size().reset_index(name='value')
                                 else:
                                     base = df_log.groupby([RESOURCE_COL, ACTIVITY_COL])[CASE_COL].nunique().reset_index(name='value')
@@ -3849,23 +3841,23 @@ else:
                                     for _, r in base.iterrows():
                                         pivot.at[r[RESOURCE_COL], r[ACTIVITY_COL]] = float(r['value'])
 
-                                # --- Normalización: % por RECURSO (fila) ---
+                                # --- Normalization: % by RESOURCE (row) ---
                                 cs = 'Blues' if PALETTE['MODE'] == 'light' else 'Viridis'
-                                if hm_scale == "% por recurso":
+                                if hm_scale == "% by resource":
                                     row_sums = pivot.sum(axis=1).replace(0.0, 1.0)
                                     heat = (pivot.div(row_sums, axis=0)) * 100.0
                                     text_df = heat.round(0).astype(int).astype(str) + '%'
-                                    cbar_title = "% dentro del recurso"
+                                    cbar_title = "% within resource"
                                     zmax = 100
                                     hover_val = "%{z:.0f}%"
                                 else:
                                     heat = pivot.copy()
                                     text_df = pivot.round(0).astype(int).astype(str)
-                                    cbar_title = "Cuenta"
+                                    cbar_title = "Count"
                                     zmax = None
                                     hover_val = "%{z:.0f}"
 
-                                # --- Figura (solo cambia colorscale y textos) ---
+                                # --- Figure (only changes colorscale and texts) ---
                                 fig_hm = go.Figure(data=go.Heatmap(
                                     z=heat.values.tolist(),
                                     x=all_activities,
@@ -3874,7 +3866,7 @@ else:
                                     zmin=0,
                                     zmax=zmax,
                                     colorbar=dict(title=cbar_title),
-                                    hovertemplate="Recurso: %{y}<br>Actividad: %{x}<br>Valor: " + hover_val + "<extra></extra>",
+                                    hovertemplate="Resource: %{y}<br>Activity: %{x}<br>Value: " + hover_val + "<extra></extra>",
                                     xgap=1, ygap=1,
                                     text=text_df.values,
                                     texttemplate="%{text}",
@@ -3886,7 +3878,7 @@ else:
                                     fig_hm.data[0].text = text_df.mask(heat == 0.0, "").values
 
 
-                                # ---------------- Estética y alto fijo ----------------
+                                # ---------------- Aesthetics and fixed height ----------------
                                 HEATMAP_HEIGHT = 400
                                 def _clamp(v, lo, hi): 
                                     return max(lo, min(hi, v))
@@ -3930,55 +3922,55 @@ else:
                                     key=f"hm_activity_resource_{st.session_state.dfg_local_refresh}"
                                 )
                             else:
-                                st.info("Para el heatmap se requieren columnas 'concept:name' y 'org:resource' (y opcionalmente 'case:concept:name').")
+                                st.info("Heatmap requires columns 'concept:name' and 'org:resource' (and optionally 'case:concept:name').")
                         except Exception as e:
-                            st.error(f"No fue posible construir el heatmap Actividad×Recurso: {e}")
+                            st.error(f"Could not build Activity×Resource heatmap: {e}")
 
                 else:
-                    st.warning("No hay datos disponibles para el gráfico de actividades")
+                    st.warning("No data available for activity chart")
             except Exception as e:
-                st.error(f"No fue posible crear el análisis de actividades: {e}")
+                st.error(f"Could not create activity analysis: {e}")
 
-            # En la sección "👥 Recursos × Roles" dentro de la columna derecha:
+            # In the "👥 Resources × Roles" section within the right column:
 
             try:
-                # VERIFICAR SI EXISTE LA COLUMNA org:role ANTES DE MOSTRAR EL HEATMAP
+                # CHECK IF org:role COLUMN EXISTS BEFORE SHOWING HEATMAP
                 if df_log is not None and 'org:role' in df_log.columns and 'org:resource' in df_log.columns:
-                    st.markdown("##### 👥 Heatmap Recursos × Roles")  # <-- ESTO DENTRO DEL IF
+                    st.markdown("##### 👥 Resources × Roles Heatmap")  # <-- THIS INSIDE THE IF
 
                     RESOURCE_COL = 'org:resource'
                     ROLE_COL = 'org:role'
                     CASE_COL = 'case:concept:name'
 
-                    # Controles para el heatmap
+                    # Controls for heatmap
                     c1, c2, c3 = st.columns([1, 1, 1])
                     with c1:
                         rr_metric = st.selectbox(
-                            "Métrica",
-                            options=["Eventos", "Casos"],
+                            "Metric",
+                            options=["Events", "Cases"],
                             index=0,
                             key=f"rr_metric_{st.session_state.dfg_local_refresh}"
                         )
                     with c2:
                         rr_norm = st.selectbox(
-                            "Normalización",
-                            options=["% por rol", "% por recurso", "Conteos"],
+                            "Normalization",
+                            options=["% by role", "% by resource", "Counts"],
                             index=0,
                             key=f"rr_norm_{st.session_state.dfg_local_refresh}"
                         )
                     with c3:
                         rr_show_zeros = st.checkbox(
-                            "Etiquetar ceros",
+                            "Label zeros",
                             value=False,
                             key=f"rr_zeros_{st.session_state.dfg_local_refresh}"
                         )
 
-                    # Lógica para métrica de casos vs eventos
-                    if rr_metric == "Casos" and CASE_COL not in df_log.columns:
-                        st.info("No se encontró 'case:concept:name'. Se usará la métrica 'Eventos'.")
-                        rr_metric = "Eventos"
+                    # Logic for cases vs events metric
+                    if rr_metric == "Cases" and CASE_COL not in df_log.columns:
+                        st.info("'case:concept:name' not found. Will use 'Events' metric.")
+                        rr_metric = "Events"
 
-                    if rr_metric == "Eventos":
+                    if rr_metric == "Events":
                         base = df_log.groupby([RESOURCE_COL, ROLE_COL]).size().reset_index(name='value')
                     else:
                         base = df_log.groupby([RESOURCE_COL, ROLE_COL])[CASE_COL].nunique().reset_index(name='value')
@@ -3986,45 +3978,45 @@ else:
                     all_resources = sorted(df_log[RESOURCE_COL].dropna().unique().tolist())
                     all_roles = sorted(df_log[ROLE_COL].dropna().unique().tolist())
 
-                    # Crear matriz con ROLES en filas (Y) y RECURSOS en columnas (X)
+                    # Create matrix with ROLES in rows (Y) and RESOURCES in columns (X)
                     pivot = pd.DataFrame(0, index=all_roles, columns=all_resources, dtype=float)
                     if not base.empty:
                         for _, r in base.iterrows():
                             pivot.at[r[ROLE_COL], r[RESOURCE_COL]] = float(r['value'])
 
-                    # Aplicar normalización según selección
+                    # Apply normalization according to selection
                     cs = 'Blues' if PALETTE['MODE'] == 'light' else 'Viridis'
                     heat = pivot.copy()
-                    cbar_title = "Cuenta"
+                    cbar_title = "Count"
                     hover_val = "%{z:.0f}"
                     zmax = None
 
-                    if rr_norm == "% por rol":  # Normalizar por filas (roles)
+                    if rr_norm == "% by role":  # Normalize by rows (roles)
                         row_sums = heat.sum(axis=1).replace(0.0, 1.0)
                         heat = (heat.div(row_sums, axis=0)) * 100.0
-                        cbar_title = "% dentro del rol"
+                        cbar_title = "% within role"
                         hover_val = "%{z:.0f}%"
                         zmax = 100
-                    elif rr_norm == "% por recurso":  # Normalizar por columnas (recursos)
+                    elif rr_norm == "% by resource":  # Normalize by columns (resources)
                         col_sums = heat.sum(axis=0).replace(0.0, 1.0)
                         heat = (heat.div(col_sums, axis=1)) * 100.0
-                        cbar_title = "% dentro del recurso"
+                        cbar_title = "% within resource"
                         hover_val = "%{z:.0f}%"
                         zmax = 100
 
-                    # Preparar texto para mostrar
+                    # Prepare text for display
                     text_df = heat.round(0).astype(int).astype(str) + ('' if zmax is None else '%')
 
-                    # Crear heatmap con ROLES en Y y RECURSOS en X
+                    # Create heatmap with ROLES in Y and RESOURCES in X
                     fig_rr = go.Figure(data=go.Heatmap(
                         z=heat.values.tolist(),
-                        x=all_resources,  # Eje X: Recursos
-                        y=all_roles,      # Eje Y: Roles (lado izquierdo)
+                        x=all_resources,  # X axis: Resources
+                        y=all_roles,      # Y axis: Roles (left side)
                         colorscale=cs,
                         zmin=0,
                         zmax=zmax,
                         colorbar=dict(title=cbar_title),
-                        hovertemplate="Rol: %{y}<br>Recurso: %{x}<br>Valor: " + hover_val + "<extra></extra>",
+                        hovertemplate="Role: %{y}<br>Resource: %{x}<br>Value: " + hover_val + "<extra></extra>",
                         xgap=1, ygap=1,
                         text=text_df.values,
                         texttemplate="%{text}",
@@ -4032,11 +4024,11 @@ else:
                         showscale=True
                     ))
 
-                    # Ocultar texto en celdas con valor 0 si no se solicita mostrar ceros
+                    # Hide text in cells with value 0 if not requested to show zeros
                     if not rr_show_zeros:
                         fig_rr.data[0].text = text_df.mask(heat == 0.0, "").values
 
-                    # Ajustar tamaño de fuentes según cantidad de elementos
+                    # Adjust font sizes according to number of elements
                     def _clamp(v, lo, hi): 
                         return max(lo, min(hi, v))
                     
@@ -4045,7 +4037,7 @@ else:
                     y_tick_size = _clamp(int(14 - 0.08 * n_roles), 8, 12)
                     x_tick_size = _clamp(int(14 - 0.05 * n_res), 8, 12)
 
-                    # Configurar layout
+                    # Configure layout
                     fig_rr.update_layout(
                         height=400,
                         margin=dict(l=6, r=6, t=4, b=4),
@@ -4059,7 +4051,7 @@ else:
                         showgrid=False,
                         automargin=True,
                         linecolor=PALETTE['BORDER'],
-                        title="Recurso"
+                        title="Resource"
                     )
                     fig_rr.update_yaxes(
                         autorange="reversed",
@@ -4067,10 +4059,10 @@ else:
                         showgrid=False,
                         automargin=True,
                         linecolor=PALETTE['BORDER'],
-                        title="Rol"
+                        title="Role"
                     )
 
-                    # Mostrar el gráfico
+                    # Show chart
                     st.plotly_chart(
                         fig_rr,
                         use_container_width=True,
@@ -4084,25 +4076,25 @@ else:
                         key=f"rr_heatmap_{st.session_state.dfg_local_refresh}"
                     )
                 else:
-                    # Solo mostrar mensaje si no existe la columna org:role
+                    # Only show message if org:role column doesn't exist
                     if df_log is not None and 'org:role' not in df_log.columns:
-                        st.info("No se encontró la columna 'org:role' en los datos. El heatmap Recursos × Roles no está disponible.")
+                        st.info("Column 'org:role' not found in data. Resources × Roles heatmap not available.")
                     elif df_log is not None and 'org:resource' not in df_log.columns:
-                        st.info("No se encontró la columna 'org:resource' en los datos. El heatmap Recursos × Roles no está disponible.")
+                        st.info("Column 'org:resource' not found in data. Resources × Roles heatmap not available.")
                         
             except Exception as e:
-                st.error(f"No fue posible construir el heatmap Recursos×Roles: {e}")
+                st.error(f"Could not build Resources×Roles heatmap: {e}")
 
-        # ----------------------------- DERECHA: Tendencia Temporal --------------------------
+        # ----------------------------- RIGHT: Temporal Trend --------------------------
         with right_col:
-            st.markdown("### 📊 Resumen de Atributos")
+            st.markdown("### 📊 Attributes Summary")
 
             try:
                 a3 = get_current_agent3()
                 attrs = a3.get("attributes", [])
                 
                 if attrs:
-                    # Crear un contenedor con mejor formato
+                    # Create container with better formatting
                     st.markdown("""
                     <div style="background: var(--card); border: 1px solid var(--border); 
                                 border-radius: 12px; padding: 1rem; margin: 0.5rem 0;">
@@ -4113,7 +4105,7 @@ else:
                         summary = attr.get('summary', '')
                         
                         if name and summary:
-                            # Mejorar el formato de cada atributo
+                            # Improve formatting of each attribute
                             st.markdown(f"""
                             <div style="margin-bottom: 1rem; padding-bottom: 0.8rem; 
                                         border-bottom: 1px solid var(--border);">
@@ -4130,48 +4122,48 @@ else:
                     
                     st.markdown("</div>", unsafe_allow_html=True)
                     
-                    # Agregar estadísticas rápidas
+                    # Add quick statistics
                     total_attrs = len(attrs)
-                    st.caption(f"📋 Se analizaron {total_attrs} atributos del proceso")
+                    st.caption(f"📋 {total_attrs} process attributes analyzed")
                     
                 else:
                     st.markdown("""
                     <div class="block dashed">
-                        No se encontraron atributos para mostrar en el análisis.
+                        No attributes found to display in analysis.
                     </div>
                     """, unsafe_allow_html=True)
                     
             except Exception as e:
-                st.error(f"Error al cargar los atributos: {str(e)}")
+                st.error(f"Error loading attributes: {str(e)}")
                 st.markdown("""
                 <div class="block dashed">
-                    No se pudo cargar el resumen de atributos del análisis.
+                    Could not load attribute summary from analysis.
                 </div>
                 """, unsafe_allow_html=True)
             
 
     with tabs[2]:
-        st.markdown("### Reporte de problemas y recomendaciones")
-        st.info("👉 Haz clic en cualquier celda de la fila para ver detalles completos del problema y solución.")
+        st.markdown("### Problem and recommendation report")
+        st.info("👉 Click any cell in the row to see complete problem and solution details.")
 
         pairs = get_agent8_problem_pairs()
 
         if not pairs:
-            st.warning("No encontré pares Problema–Solución. Revisa el state o el formato.")
+            st.warning("No Problem–Solution pairs found. Check state or format.")
         else:
-            # Crear DataFrame solo con Problema y Solución (la justificación está oculta)
-            df_tbl = pd.DataFrame(pairs, columns=["Problema", "Solución"])
+            # Create DataFrame only with Problem and Solution (justification is hidden)
+            df_tbl = pd.DataFrame(pairs, columns=["Problem", "Solution"])
             
-            # Obtener los datos completos del agente8 para los detalles
+            # Get complete agent8 data for details
             agent8_items = get_current_agent8()
 
-            # Click handler para cualquier celda de la fila
+            # Click handler for any cell in the row
             on_cell_clicked = JsCode(
                 """function(params){ 
                     try{ 
-                        // Marcar esta fila como seleccionada
+                        // Mark this row as selected
                         params.node.setDataValue('_selected', true);
-                        // Limpiar otras filas
+                        // Clear other rows
                         params.api.forEachNode(function(node) {
                             if (node !== params.node) {
                                 node.setDataValue('_selected', false);
@@ -4183,7 +4175,7 @@ else:
 
             gb = GridOptionsBuilder.from_dataframe(df_tbl)
 
-            # Configuración principal
+            # Main configuration
             gb.configure_pagination(enabled=False)
             
             gb.configure_grid_options(
@@ -4208,13 +4200,13 @@ else:
                                 }
                             }
                         } catch (err) {
-                            console.log('No se pudo obtener el ancho del grid, usando valor por defecto');
+                            console.log('Could not get grid width, using default value');
                         }
                         
                         const columnWidth = (availableWidth - HORIZONTAL_PADDING * 2) / 2;
                         
-                        const probText = params.data['Problema'] ? String(params.data['Problema']) : '';
-                        const solText = params.data['Solución'] ? String(params.data['Solución']) : '';
+                        const probText = params.data['Problem'] ? String(params.data['Problem']) : '';
+                        const solText = params.data['Solution'] ? String(params.data['Solution']) : '';
                         
                         function calculateLines(text, availableWidth) {
                             if (!text) return 1;
@@ -4253,7 +4245,7 @@ else:
                 """)
             )
 
-            # Configuración de columnas
+            # Column configuration
             gb.configure_default_column(
                 resizable=True,
                 wrapText=True,
@@ -4267,12 +4259,12 @@ else:
                 }
             )
 
-            gb.configure_column("Problema", 
-                            header_name="Problema", 
+            gb.configure_column("Problem", 
+                            header_name="Problem", 
                             minWidth=300,
                             flex=1.5,
                             autoHeight=True,
-                            tooltipField="Problema",
+                            tooltipField="Problem",
                             cellStyle=JsCode("""
                                 function(params) {
                                     if (params.data._selected) {
@@ -4297,12 +4289,12 @@ else:
                                 }
                             """))
 
-            gb.configure_column("Solución", 
-                            header_name="Solución", 
+            gb.configure_column("Solution", 
+                            header_name="Solution", 
                             minWidth=300,
                             flex=1.5,
                             autoHeight=True,
-                            tooltipField="Solución",
+                            tooltipField="Solution",
                             cellStyle=JsCode("""
                                 function(params) {
                                     if (params.data._selected) {
@@ -4327,12 +4319,12 @@ else:
                                 }
                             """))
 
-            # Añadir columna oculta para el estado de selección
+            # Add hidden column for selection state
             gb.configure_column("_selected", 
                             hide=True, 
                             editable=True)
 
-            # Paletas de tema
+            # Theme palettes
             LIGHT_PALETTE = {
                 'BACKGROUND': '#ffffff',
                 'HEADER_BG': 'rgba(37,99,235,0.08)',
@@ -4436,11 +4428,11 @@ else:
                 }
             }
 
-            # Añadir columna _selected al DataFrame
+            # Add _selected column to DataFrame
             df_tbl_with_selection = df_tbl.copy()
             df_tbl_with_selection['_selected'] = False
 
-            # DEFINIR grid aquí
+            # DEFINE grid here
             grid = AgGrid(
                 df_tbl_with_selection,
                 gridOptions=gb.build(),
@@ -4453,7 +4445,7 @@ else:
                 reload_data=True
             )
 
-            # Mostrar detalles cuando se selecciona una fila
+            # Show details when row is selected
             df_after = pd.DataFrame(grid["data"])
             selected_rows = df_after[df_after['_selected'] == True]
 
@@ -4468,11 +4460,11 @@ else:
                 if 0 <= selected_index_int < len(pairs):
                     selected_pair = pairs[selected_index_int]
                     
-                    # Mostrar la justificación del problema
-                    st.markdown("#### 📋 Justificación Detallada del Problema")
-                    problem_justification = selected_pair.get('_justificacion', 'No disponible')
+                    # Show problem justification
+                    st.markdown("#### 📋 Detailed Problem Justification")
+                    problem_justification = selected_pair.get('_justification', 'Not available')
                     
-                    if problem_justification and problem_justification != 'No disponible':
+                    if problem_justification and problem_justification != 'Not available':
                         if PALETTE["MODE"] == "dark":
                             st.markdown(f"""
                             <div style="
@@ -4489,16 +4481,16 @@ else:
                         else:
                             st.warning(problem_justification)
                     else:
-                        st.info("No se encontró justificación detallada para este problema.")
+                        st.info("No detailed justification found for this problem.")
                     
-                    # Buscar el ítem correspondiente en agent8_items
+                    # Find corresponding item in agent8_items
                     if selected_index_int < len(agent8_items):
                         selected_item = agent8_items[selected_index_int]
                         
                         if selected_item:
-                            # Mostrar la solución
-                            st.markdown("#### 💡 Solución")
-                            solution_text = selected_item.get('recommendation', 'No disponible')
+                            # Show solution
+                            st.markdown("#### 💡 Solution")
+                            solution_text = selected_item.get('recommendation', 'Not available')
                             
                             if PALETTE["MODE"] == "dark":
                                 st.markdown(f"""
@@ -4516,10 +4508,10 @@ else:
                             else:
                                 st.info(solution_text)
                             
-                            # Mostrar justificación de la solución si existe
+                            # Show solution justification if exists
                             solution_justification = selected_item.get('justification_of_recommendation')
                             if solution_justification:
-                                st.markdown("#### ❓ ¿Por qué es una solución?")
+                                st.markdown("#### ❓ Why is this a solution?")
                                 if PALETTE["MODE"] == "dark":
                                     st.markdown(f"""
                                     <div style="
@@ -4537,15 +4529,15 @@ else:
                                     st.success(solution_justification)
                         
                      
-                        # Manejar scenario_analysis de forma segura
+                        # Handle scenario_analysis safely
                         scenario_analysis = selected_item.get('scenario_analysis') if selected_item else {}
                         if scenario_analysis is None:
                             scenario_analysis = {}
                         
-                        # Mostrar análisis cualitativo si existe
+                        # Show qualitative analysis if exists
                         qualitative_analysis = scenario_analysis.get('qualitative_analysis')
                         if qualitative_analysis:
-                            st.markdown("#### 📊 Análisis Cualitativo")
+                            st.markdown("#### 📊 Qualitative Analysis")
                             if PALETTE["MODE"] == "dark":
                                 st.markdown(f"""
                                 <div style="
@@ -4562,10 +4554,10 @@ else:
                             else:
                                 st.warning(qualitative_analysis)
                         
-                        # Mostrar análisis cuantitativo si existe
+                        # Show quantitative analysis if exists
                         quantitative_analysis = scenario_analysis.get('quantitative_analysis')
                         if quantitative_analysis:
-                            st.markdown("#### 📈 Análisis Cuantitativo")
+                            st.markdown("#### 📈 Quantitative Analysis")
                             if PALETTE["MODE"] == "dark":
                                 st.markdown(f"""
                                 <div style="
@@ -4583,10 +4575,10 @@ else:
                                 st.info(quantitative_analysis)
                         
                         
-                        # Mostrar soluciones alternativas si existen
+                        # Show alternative solutions if they exist
                         alternative_solutions = scenario_analysis.get('alternative_solutions')
                         if alternative_solutions:
-                            st.markdown("#### 🔄 Soluciones Alternativas")
+                            st.markdown("#### 🔄 Alternative Solutions")
                             for i, alt_solution in enumerate(alternative_solutions, 1):
                                 if PALETTE["MODE"] == "dark":
                                     st.markdown(f"""
@@ -4605,22 +4597,22 @@ else:
                                     st.write(f"{i}. {alt_solution}")
                         
                 else:
-                    st.warning("Índice de solución fuera de rango.")
+                    st.warning("Solution index out of range.")
 
     
     with tabs[3]:
-        st.markdown("### 💬 Chat Inteligente con Contexto")
+        st.markdown("### 💬 Intelligent Chat with Context")
 
-        # Estado
+        # State
         if "enhanced_chat_messages" not in st.session_state:
             st.session_state.enhanced_chat_messages = []
         if "conversation_id" not in st.session_state:
             st.session_state.conversation_id = str(uuid.uuid4())
 
-        # === FEED DEL CHAT (arriba) ===
-        feed = st.container()        # Contenedor fijo para todo el historial
+        # === CHAT FEED (top) ===
+        feed = st.container()        # Fixed container for entire history
         with feed:
-            # Historial existente
+            # Existing history
             for msg in st.session_state.enhanced_chat_messages:
                 with st.chat_message(msg["role"]):
                     if PALETTE["MODE"] == "dark":
@@ -4628,14 +4620,14 @@ else:
                     else:
                         st.markdown(msg["content"])
                     
-            # Slot donde se dibujará el "pensando..." y la respuesta de este turno
+            # Slot where "thinking..." and this turn's response will be drawn
             live_slot = st.empty()
 
-        # === INPUT (siempre abajo) ===
-        prompt = st.chat_input("Haz una pregunta sobre el informe presentado ...")
+        # === INPUT (always bottom) ===
+        prompt = st.chat_input("Ask a question about the presented report ...")
 
         if prompt:
-            # Añade mensaje de usuario al feed (arriba)
+            # Add user message to feed (top)
             st.session_state.enhanced_chat_messages.append({"role": "user", "content": prompt})
 
             with feed:
@@ -4643,9 +4635,9 @@ else:
                     st.markdown(f'<div style="color:{PALETTE["TEXT"]};">{prompt}</div>', unsafe_allow_html=True)
                 with st.chat_message("assistant"):
                     spinner_placeholder = st.empty()
-                    spinner_placeholder.markdown("🟦 Buscando en libros, casos de estudio y tu proceso...")
+                    spinner_placeholder.markdown("🟦 Searching in books, case studies and your process...")
 
-            # === Llamada al backend ===
+            # === Backend call ===
             try:
                 resp = requests.post(
                     f"{BACKEND_URL}/chat/query-enhanced",
@@ -4659,17 +4651,17 @@ else:
                     timeout=60,
                 )
                 if resp.status_code != 200:
-                    raise RuntimeError(f"Error del servidor: {resp.status_code}")
+                    raise RuntimeError(f"Server error: {resp.status_code}")
 
                 data = resp.json()
                 raw_response = data.get("response", "")
                 
-                # MANEJO ESPECÍFICO PARA EL FORMATO DE LISTA DE DICCIONARIOS
+                # SPECIFIC HANDLING FOR LIST OF DICTIONARIES FORMAT
                 answer = ""
                 try:
-                    # Caso 1: Si es una lista de diccionarios (como [{'type': 'text', 'text': '...'}])
+                    # Case 1: If it's a list of dictionaries (like [{'type': 'text', 'text': '...'}])
                     if isinstance(raw_response, list):
-                        # Extraer todos los textos de los diccionarios en la lista
+                        # Extract all texts from dictionaries in the list
                         text_parts = []
                         for item in raw_response:
                             if isinstance(item, dict) and item.get('type') == 'text' and 'text' in item:
@@ -4684,12 +4676,12 @@ else:
                         else:
                             answer = str(raw_response)
                     
-                    # Caso 2: Si es un string, intentar parsear como JSON
+                    # Case 2: If it's a string, try to parse as JSON
                     elif isinstance(raw_response, str):
                         try:
                             parsed_json = json.loads(raw_response)
                             if isinstance(parsed_json, list):
-                                # Manejar el mismo caso de lista
+                                # Handle same list case
                                 text_parts = []
                                 for item in parsed_json:
                                     if isinstance(item, dict) and item.get('type') == 'text' and 'text' in item:
@@ -4708,25 +4700,25 @@ else:
                             else:
                                 answer = str(parsed_json)
                         except (json.JSONDecodeError, AttributeError):
-                            # Si falla el parseo JSON, usar el string directamente
+                            # If JSON parsing fails, use string directly
                             answer = raw_response
                     
-                    # Caso 3: Si ya es un diccionario
+                    # Case 3: If already a dictionary
                     elif isinstance(raw_response, dict):
                         answer = raw_response.get("text", str(raw_response))
                     
-                    # Caso 4: Cualquier otro tipo
+                    # Case 4: Any other type
                     else:
-                        answer = str(raw_response) if raw_response else "No se pudo obtener una respuesta."
+                        answer = str(raw_response) if raw_response else "Could not get a response."
                         
                 except Exception as parse_error:
-                    # Fallback seguro si todo falla
-                    answer = f"Respuesta recibida: {str(raw_response)[:500]}..." if raw_response else "No se pudo obtener una respuesta."
+                    # Safe fallback if everything fails
+                    answer = f"Response received: {str(raw_response)[:500]}..." if raw_response else "Could not get a response."
                     
                 evidence = data.get("evidence", [])
                 context_info = data.get("context_used", {})
 
-                # Pinta la respuesta EN EL FEED, usando el slot vivo
+                # Paint response IN THE FEED, using live slot
                 with feed:
                     if PALETTE["MODE"] == "dark":
                         spinner_placeholder.markdown(f'<div style="color: white;">{answer}</div>', unsafe_allow_html=True)
@@ -4734,9 +4726,9 @@ else:
                         spinner_placeholder.markdown(answer)
                         
                     if context_info:
-                        st.caption(f"📚 Búsqueda: {context_info.get('collections_with_results',0)}/3 colecciones, {context_info.get('total_evidence_found',0)} evidencias")
+                        st.caption(f"📚 Search: {context_info.get('collections_with_results',0)}/3 collections, {context_info.get('total_evidence_found',0)} evidences")
 
-                # Persiste en historial
+                # Persist in history
                 st.session_state.enhanced_chat_messages.append({
                     "role": "assistant",
                     "content": answer,
@@ -4750,49 +4742,49 @@ else:
                     spinner_placeholder.markdown(err)
                 st.session_state.enhanced_chat_messages.append({"role": "assistant", "content": err})
 
-            # Rerender para que el feed completo quede arriba y el input abajo
+            # Rerender so complete feed stays top and input bottom
             st.rerun()
   
     st.markdown(f"""
     <style>
-    /* ====== Contenedor principal: ocupa viewport y scrollea ====== */
+    /* ====== Main container: occupies viewport and scrolls ====== */
     [data-testid="stAppViewContainer"] {{
         height: 100vh;
         overflow-y: auto;
         overscroll-behavior: contain;
     }}
 
-    /* Evita que el último mensaje quede tapado por el input */
+    /* Prevents last message from being covered by input */
     .main .block-container {{
-        padding-bottom: 7.5rem; /* ajusta si cambias el alto del input */
+        padding-bottom: 7.5rem; /* adjust if you change input height */
     }}
 
-    /* ====== ChatInput pegado abajo, sin línea ni sombra ====== */
+    /* ====== ChatInput stuck bottom, no line or shadow ====== */
     [data-testid="stChatInput"] {{
         position: sticky;
         bottom: 0;
         background: {PALETTE['BG']};
         padding: .75rem 0;
         margin: 0;
-        border-top: none !important;   /* quita la línea */
-        box-shadow: none !important;   /* por si el tema agrega sombra */
+        border-top: none !important;   /* remove line */
+        box-shadow: none !important;   /* in case theme adds shadow */
         z-index: 100;
     }}
-    /* Por si Streamlit inserta <hr> o un Divider dentro del input */
+    /* In case Streamlit inserts <hr> or Divider inside input */
     [data-testid="stChatInput"] hr,
     [data-testid="stChatInput"] [data-testid="stDivider"] {{
         display: none !important;
     }}
 
-    /* ====== (Opcional) Si envuelves los mensajes en #chat-body ======
-    Solo el feed scrollea y el input queda fijo */
+    /* ====== (Optional) If you wrap messages in #chat-body ======
+    Only feed scrolls and input stays fixed */
     #chat-body {{
-        max-height: calc(100vh - 8.5rem); /* header + input aprox */
+        max-height: calc(100vh - 8.5rem); /* header + input approx */
         overflow-y: auto;
         padding-right: .25rem;
     }}
 
-    /* Mensajes del chat: espaciado y color consistente */
+    /* Chat messages: spacing and consistent color */
     .stChatMessage {{
         margin-bottom: 1rem;
     }}
@@ -4800,7 +4792,7 @@ else:
         color: {PALETTE['TEXT']} !important;
     }}
 
-    /* Expanders y textos auxiliares legibles en ambos temas */
+    /* Expanders and auxiliary texts readable in both themes */
     .streamlit-expanderContent {{
         color: {PALETTE['TEXT']} !important;
     }}
@@ -4808,11 +4800,9 @@ else:
         color: {PALETTE['SOFT']} !important;
     }}
 
-    /* Ajuste suave del scroll */
+    /* Smooth scroll adjustment */
     html {{
         scroll-behavior: smooth;
     }}
     </style>
     """, unsafe_allow_html=True)
-
-
