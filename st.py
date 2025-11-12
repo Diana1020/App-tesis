@@ -3300,7 +3300,7 @@ if not is_backend_ready():
 
 else:
     # === Unlock ALL tabs when there's a file ===
-    tabs = st.tabs(["Petri net + BPMN", "DFG + Attributes", "Problem and recommendation report", "Chat"])
+    tabs = st.tabs(["Petri net", "DFG + Attributes", "Problem and recommendation report", "Chat"])
 
     # ============================================================
     # TAB: Petri net
@@ -4806,3 +4806,4 @@ else:
     }}
     </style>
     """, unsafe_allow_html=True)
+
