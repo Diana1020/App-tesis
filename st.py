@@ -4582,25 +4582,6 @@ else:
                             else:
                                 st.info(quantitative_analysis)
                         
-                        # Mostrar diagnóstico de falla si existe
-                        failure_diagnosis = scenario_analysis.get('failure_diagnosis')
-                        if failure_diagnosis:
-                            st.markdown("#### 🔍 Diagnóstico de Falla")
-                            if PALETTE["MODE"] == "dark":
-                                st.markdown(f"""
-                                <div style="
-                                    background: #7f1d1d; 
-                                    color: #fecaca; 
-                                    padding: 1rem; 
-                                    border-radius: 0.5rem; 
-                                    border-left: 4px solid #ef4444;
-                                    margin: 0.5rem 0;
-                                ">
-                                    {failure_diagnosis}
-                                </div>
-                                """, unsafe_allow_html=True)
-                            else:
-                                st.error(failure_diagnosis)
                         
                         # Mostrar soluciones alternativas si existen
                         alternative_solutions = scenario_analysis.get('alternative_solutions')
@@ -4623,46 +4604,6 @@ else:
                                 else:
                                     st.write(f"{i}. {alt_solution}")
                         
-                        # Mostrar síntesis de impacto si existe
-                        synthesis_impact = scenario_analysis.get('synthesis_impact', {})
-                        if synthesis_impact:
-                            st.markdown("#### 📋 Síntesis de Impacto")
-                            
-                            positive_impacts = synthesis_impact.get('positive')
-                            if positive_impacts:
-                                st.markdown("**✅ Impactos Positivos:**")
-                                if PALETTE["MODE"] == "dark":
-                                    st.markdown(f"""
-                                    <div style="
-                                        background: #065f46; 
-                                        color: #d1fae5; 
-                                        padding: 0.75rem; 
-                                        border-radius: 0.375rem; 
-                                        margin: 0.5rem 0;
-                                    ">
-                                        {positive_impacts}
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                                else:
-                                    st.write(positive_impacts)
-                            
-                            negative_impacts = synthesis_impact.get('negative')
-                            if negative_impacts:
-                                st.markdown("**❌ Impactos Negativos:**")
-                                if PALETTE["MODE"] == "dark":
-                                    st.markdown(f"""
-                                    <div style="
-                                        background: #7f1d1d; 
-                                        color: #fecaca; 
-                                        padding: 0.75rem; 
-                                        border-radius: 0.375rem; 
-                                        margin: 0.5rem 0;
-                                    ">
-                                        {negative_impacts}
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                                else:
-                                    st.write(negative_impacts)
                 else:
                     st.warning("Índice de solución fuera de rango.")
 
@@ -4873,4 +4814,5 @@ else:
     }}
     </style>
     """, unsafe_allow_html=True)
+
 
