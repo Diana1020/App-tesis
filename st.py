@@ -2298,7 +2298,14 @@ def read_event_log(uploaded) -> Tuple[object, pd.DataFrame]:
             
             # 3. Conversión a DataFrame
             df = pm4py.convert_to_dataframe(log)
-            
+            df['time:timestamp']= pd.to_datetime(df['time:timestamp'], errors='coerce')
+            if "start_timestamp" in df.columns:
+                df["start_timestamp"] = pd.to_datetime(df["start_timestamp"], errors="coerce")
+
+            if "complete_timestamp" in df.columns:
+                df["complete_timestamp"] = pd.to_datetime(df["complete_timestamp"], errors="coerce")
+
+                
             # 5. Ordenar (Esencial para Process Mining)
             if "case:concept:name" in df.columns and "time:timestamp" in df.columns:
                 df = df.sort_values(by=["case:concept:name", "time:timestamp"], kind="mergesort")
@@ -4841,6 +4848,7 @@ else:
     }}
     </style>
     """, unsafe_allow_html=True)
+
 
 
 
