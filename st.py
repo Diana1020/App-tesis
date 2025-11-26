@@ -13,8 +13,7 @@ from st_aggrid import JsCode
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Rectangle
 
-import pm4py
-from pm4py.objects.log.importer.xes import importer as xes_importer
+
 from pm4py.objects.petri_net.obj import PetriNet, Marking
 import graphviz
 import hashlib
@@ -2264,9 +2263,10 @@ def read_event_log(uploaded) -> Tuple[object, pd.DataFrame]:
     Reads CSV/XES/XES.GZ from st.file_uploader and returns (EventLog, sorted DataFrame).
     Requires standard CSV columns: case:concept:name, concept:name, time:timestamp
     """
+    import pm4py
+    from pm4py.objects.log.importer.xes import importer as xes_importer
     from pm4py.objects.conversion.log import converter as log_converter
     from pm4py.util import xes_constants as xes
-    from pm4py.objects.log.importer.xes import importer as xes_importer
     import tempfile, os
 
     name = (uploaded.name or "").lower()
@@ -2299,18 +2299,12 @@ def read_event_log(uploaded) -> Tuple[object, pd.DataFrame]:
             # 3. Conversión a DataFrame
             df = pm4py.convert_to_dataframe(log)
             
-            # 4. ¡CRÍTICO PARA EL SERVIDOR! Liberar memoria
-            # Tu imagen muestra que funciona localmente, pero en el servidor 
-            # no caben 'log' y 'df' juntos. Borramos 'log' inmediatamente.
-            del log
-            gc.collect() # Forzar limpieza de RAM
-            
             # 5. Ordenar (Esencial para Process Mining)
             if "case:concept:name" in df.columns and "time:timestamp" in df.columns:
                 df = df.sort_values(by=["case:concept:name", "time:timestamp"], kind="mergesort")
             
             # Retornamos None en el log para que Streamlit no intente guardarlo en caché
-            return None, df 
+            return log, df 
             
         except Exception as e:
             st.error(f"Error procesando XES: {str(e)}")
@@ -4847,6 +4841,7 @@ else:
     }}
     </style>
     """, unsafe_allow_html=True)
+
 
 
 
