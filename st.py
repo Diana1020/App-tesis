@@ -1720,12 +1720,35 @@ _SCORE_ROW_RE = re.compile(
 
 def parse_score_rows(text: str) -> List[Tuple[str, float, float, float]]:
     rows = []
-    for m in _SCORE_ROW_RE.finditer(text or ""):
+    if not text: return rows
+
+    # Strategy 1: Original Regex (Key=Value format)
+    # Looks for: "Name: S_initial=0.9, Penalty=0.1, S_final=0.8"
+    for m in _SCORE_ROW_RE.finditer(text):
         name = _clean_candidate_name(m.group("name"))
         try:
             rows.append((name, float(m.group("Sini")), float(m.group("PEN")), float(m.group("Sfin"))))
         except Exception:
             pass
+
+    # Strategy 2: Pipe Table Regex (Markdown/ASCII table format)
+    # Looks for: "Name | 0.9 | 0.1 | 0.8" (handling optional leading/trailing pipes)
+    if not rows:
+        table_re = re.compile(
+            r"(?im)^\|?\s*(?P<name>[^|\n]+?)\s*\|\s*(?P<Sini>[\d\.]+)\s*\|\s*(?P<PEN>[\d\.]+)\s*\|\s*(?P<Sfin>[\d\.]+)"
+        )
+        for m in table_re.finditer(text):
+            name_raw = m.group("name").strip()
+            # Skip header rows (e.g., "Candidate", "Model")
+            if name_raw.lower() in ["candidate", "model", "name"]:
+                continue
+            
+            name = _clean_candidate_name(name_raw)
+            try:
+                rows.append((name, float(m.group("Sini")), float(m.group("PEN")), float(m.group("Sfin"))))
+            except Exception:
+                pass
+
     return rows
 
 
@@ -4806,4 +4829,5 @@ else:
     }}
     </style>
     """, unsafe_allow_html=True)
+
 
