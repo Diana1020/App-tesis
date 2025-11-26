@@ -1857,6 +1857,7 @@ def format_summary_with_table(summary: str) -> Tuple[str, str]:
     - Removes JSON_OUTPUT
     - Inserts [[SCORE_TABLE]] at anchor line (EN/ES)
     - Removes inline 'summary line' with S_initial/S_final to avoid duplication
+    - NEW: Removes ASCII/Markdown pipe tables to prevent double rendering
     - Converts separators to subtitles
     """
     if not summary:
@@ -1877,11 +1878,18 @@ def format_summary_with_table(summary: str) -> Tuple[str, str]:
             s = s[:m.start()] + "[[SCORE_TABLE]]" + s[m.end():]
             placed = True
 
+    # --- CORRECCIÓN: Eliminar la tabla de texto crudo (líneas con tuberías |) ---
+    # Elimina líneas que parecen filas de tabla (ej: "Modelo | 0.9 | ...")
+    # y líneas separadoras (ej: "---|---|---")
+    s = re.sub(r"(?m)^.*?\|.*?\|.*?$", "", s)
+
     s = remove_inline_score_lines(s)
     s = convert_separators_to_subtitles(s)
 
-    return s, table_html
+    # Limpieza final de líneas vacías excesivas que puedan haber quedado
+    s = re.sub(r"\n{3,}", "\n\n", s)
 
+    return s, table_html
 
 # ------------------------------------------------------------
 # Graphviz according to palette
@@ -4829,5 +4837,6 @@ else:
     }}
     </style>
     """, unsafe_allow_html=True)
+
 
 
