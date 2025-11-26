@@ -13,6 +13,8 @@ from st_aggrid import JsCode
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Rectangle
 
+import pm4py
+from pm4py.objects.log.importer.xes import importer as xes_importer
 from pm4py.objects.petri_net.obj import PetriNet, Marking
 import graphviz
 import hashlib
@@ -4845,6 +4847,7 @@ else:
     }}
     </style>
     """, unsafe_allow_html=True)
+
 
 
 
