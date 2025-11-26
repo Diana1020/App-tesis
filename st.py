@@ -2262,6 +2262,7 @@ def read_event_log(uploaded) -> Tuple[object, pd.DataFrame]:
     Reads CSV/XES/XES.GZ from st.file_uploader and returns (EventLog, sorted DataFrame).
     Requires standard CSV columns: case:concept:name, concept:name, time:timestamp
     """
+
     from pm4py.objects.conversion.log import converter as log_converter
     from pm4py.util import xes_constants as xes
     from pm4py.objects.log.importer.xes import importer as xes_importer
@@ -2289,20 +2290,14 @@ def read_event_log(uploaded) -> Tuple[object, pd.DataFrame]:
             tmp_path = tmp.name
         evlog = xes_importer.apply(tmp_path)
         # Auxiliary DataFrame (for quick tables)
-        records = []
-        for trace in evlog:
-            case_id = trace.attributes.get("concept:name")
-            for ev in trace:
-                records.append({
-                    "case:concept:name": case_id,
-                    "concept:name": ev.get("concept:name"),
-                    "time:timestamp": ev.get("time:timestamp"),
-                    "org:resource": ev.get("org:resource"),
-                    "org:role": ev.get("org:role"),
-                })
-        df = pd.DataFrame(records)
+        df = log_converter.apply(evlog, variant=log_converter.Variants.TO_DATA_FRAME)
         if "time:timestamp" in df:
             df["time:timestamp"] = pd.to_datetime(df["time:timestamp"], errors="coerce")
+
+        if "time:timestamp" in df:
+            df["start_timestamp"] = pd.to_datetime(df["start_timestamp"], errors="coerce")
+
+            
         df = df.sort_values(by=["case:concept:name", "time:timestamp"], kind="mergesort")
         try:
             os.remove(tmp_path)
@@ -4837,5 +4832,6 @@ else:
     }}
     </style>
     """, unsafe_allow_html=True)
+
 
 
