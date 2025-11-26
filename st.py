@@ -2302,7 +2302,12 @@ def read_event_log(uploaded) -> Tuple[object, pd.DataFrame]:
                 })
         df = pd.DataFrame(records)
         if "time:timestamp" in df:
-            df["time:timestamp"] = pd.to_datetime(df["time:timestamp"], errors="coerce")
+            df['time:timestamp'] = pd.to_datetime(df['time:timestamp'], utc=True, format='mixed')
+        if "start_timestamp" in df:
+            df["start_timestamp"] = pd.to_datetime(df["start_timestamp"], utc=True, format='mixed')
+        if "complete_timestamp" in df:
+            df["complete_timestamp"] = pd.to_datetime(df["complete_timestamp"], utc=True, format='mixed')
+            
         df = df.sort_values(by=["case:concept:name", "time:timestamp"], kind="mergesort")
         try:
             os.remove(tmp_path)
@@ -4837,6 +4842,7 @@ else:
     }}
     </style>
     """, unsafe_allow_html=True)
+
 
 
 
