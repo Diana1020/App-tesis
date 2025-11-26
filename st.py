@@ -2282,41 +2282,44 @@ def read_event_log(uploaded) -> Tuple[object, pd.DataFrame]:
         return evlog, df
 
     elif name.endswith(".xes") or name.endswith(".xes.gz"):
-        # Save to tmp and use importer
         suffix = ".xes.gz" if name.endswith(".xes.gz") else ".xes"
+        
+        # 1. Guardar en disco (necesario para pm4py.read_xes)
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(uploaded.getbuffer())
             tmp_path = tmp.name
-        evlog = xes_importer.apply(tmp_path)
-        # Auxiliary DataFrame (for quick tables)
-        records = []
-        for trace in evlog:
-            case_id = trace.attributes.get("concept:name")
-            for ev in trace:
-                records.append({
-                    "case:concept:name": case_id,
-                    "concept:name": ev.get("concept:name"),
-                    "time:timestamp": ev.get("time:timestamp"),
-                    "org:resource": ev.get("org:resource"),
-                    "org:role": ev.get("org:role"),
-                })
-        df = pd.DataFrame(records)
-        if "time:timestamp" in df:
-            df['time:timestamp'] = pd.to_datetime(df['time:timestamp'], utc=True, format='mixed')
-        if "start_timestamp" in df:
-            df["start_timestamp"] = pd.to_datetime(df["start_timestamp"], utc=True, format='mixed')
-        if "complete_timestamp" in df:
-            df["complete_timestamp"] = pd.to_datetime(df["complete_timestamp"], utc=True, format='mixed')
-            
-        df = df.sort_values(by=["case:concept:name", "time:timestamp"], kind="mergesort")
+        
         try:
-            os.remove(tmp_path)
-        except Exception:
-            pass
-        return evlog, df
+            # 2. Lectura directa (Tal como en tu imagen)
+            # pm4py ya maneja la descompresión GZ y las fechas automáticamente
+            log = pm4py.read_xes(tmp_path)
+            
+            # 3. Conversión a DataFrame
+            df = pm4py.convert_to_dataframe(log)
+            
+            # 4. ¡CRÍTICO PARA EL SERVIDOR! Liberar memoria
+            # Tu imagen muestra que funciona localmente, pero en el servidor 
+            # no caben 'log' y 'df' juntos. Borramos 'log' inmediatamente.
+            del log
+            gc.collect() # Forzar limpieza de RAM
+            
+            # 5. Ordenar (Esencial para Process Mining)
+            if "case:concept:name" in df.columns and "time:timestamp" in df.columns:
+                df = df.sort_values(by=["case:concept:name", "time:timestamp"], kind="mergesort")
+            
+            # Retornamos None en el log para que Streamlit no intente guardarlo en caché
+            return None, df 
+            
+        except Exception as e:
+            st.error(f"Error procesando XES: {str(e)}")
+            return None, pd.DataFrame()
+        finally:
+            # Limpiar archivo temporal del disco
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
     else:
-        raise ValueError("Unsupported format. Upload CSV, XES or XES.GZ.")
+        raise ValueError("Formato no soportado. Use CSV, XES o XES.GZ.")
 
 
 def discover_dfg_with_pm4py(evlog):
@@ -4842,6 +4845,7 @@ else:
     }}
     </style>
     """, unsafe_allow_html=True)
+
 
 
 
