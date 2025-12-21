@@ -1,6 +1,9 @@
 streamlit==1.43.2
 streamlit-aggrid==0.3.4.post3
 
+sortedcontainers>=2.4.0
+intervaltree>=3.1.0
+
 plotly==6.3.1
 requests==2.32.3
 tzdata==2025.2
@@ -12,5 +15,6 @@ pm4py==2.7.18
 pandas==2.2.3
 numpy==2.0.1
 matplotlib==3.9.4
+
 
 
