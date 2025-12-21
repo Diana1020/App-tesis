@@ -47,7 +47,7 @@ def is_backend_ready() -> bool:
     return bool(path) and os.path.exists(path)
 
 # Backend configuration
-BACKEND_URL = "https://agentes-service-947456414948.us-central1.run.app"
+BACKEND_URL = "https://agentes-service-571347647744.us-central1.run.app"
 
 # --- Client identity and session (without login) ---
 def get_or_make_client_id() -> str:
@@ -4832,6 +4832,7 @@ else:
     }}
     </style>
     """, unsafe_allow_html=True)
+
 
 
 
